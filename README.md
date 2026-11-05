@@ -43,6 +43,10 @@ CORPUS_DIR=/path/to/your/corpus node dist/index.js
 
 配置后即可在任何支持 MCP 的 agent 中使用；corpus 根的 `AGENTS.md` 记录全部维护约定（页面类型、格式、Ingest/Query/Lint 工作流、git 纪律），跟着库走，不跟着工具版本走。
 
+### 并发语义
+
+同一 corpus 配置多个 server 实例（多个会话/多个 agent）是安全的：写操作（`init`/`apply`）经系统临时目录中的 PID 锁文件互斥——写事务串行，读工具（`status`/`search`/`ingest_prepare`/`lint`）始终可用。持锁进程崩溃后，下一次写操作会自动接管残留锁。等待持锁释放的上限默认 15 秒，可用环境变量 `CORPUS_LOCK_TIMEOUT_MS`（毫秒）覆盖。
+
 ## 工具一览
 
 | 工具 | 读写 | 说明 |
