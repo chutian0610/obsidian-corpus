@@ -7,6 +7,7 @@ import { appendLog } from "../corpus/logFile.js";
 import { CORPUS_AGENTS_MD_INITIAL } from "../corpus/agentsFile.js";
 import { pathExists } from "../corpus/fs.js";
 import { gitAdd, gitCommit, gitInit } from "../corpus/git.js";
+import { LockBusyError, withWriteLock } from "../corpus/lockfile.js";
 
 /** init 的 commit 消息（spec #1：`init: corpus`）。 */
 export const INIT_COMMIT_MESSAGE = "init: corpus";
@@ -105,10 +106,18 @@ export const initTool: ToolDefinition = {
         inputSchema: {},
       },
       async () => {
-        const result = await initCorpus(ctx.corpusDir);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
+        // init 的骨架落地同样在写锁临界区内（#8）
+        try {
+          const result = await withWriteLock(ctx.corpusDir, () => initCorpus(ctx.corpusDir));
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        } catch (error) {
+          if (error instanceof LockBusyError) {
+            return { content: [{ type: "text", text: error.message }], isError: true };
+          }
+          throw error;
+        }
       },
     );
   },

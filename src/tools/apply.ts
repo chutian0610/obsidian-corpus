@@ -22,6 +22,7 @@ import { appendLog } from "../corpus/logFile.js";
 import { collectWikiPages, type WikiPage } from "../corpus/pages.js";
 import { pathExists, readOptionalFile } from "../corpus/fs.js";
 import { gitAdd, gitCommit, gitStatus } from "../corpus/git.js";
+import { LockBusyError, withWriteLock } from "../corpus/lockfile.js";
 import type { ToolDefinition } from "./registry.js";
 
 /**
@@ -384,7 +385,19 @@ export const applyTool: ToolDefinition = {
     server.registerTool(
       this.name,
       { description: this.description, inputSchema },
-      async (args) => handleApply(ctx.corpusDir, args as ApplyArgs),
+      async (args) => {
+        // 写事务整体（干净检查→写→commit）包进 corpus 写锁，与其他 server 实例串行（#8）
+        try {
+          return await withWriteLock(ctx.corpusDir, () =>
+            handleApply(ctx.corpusDir, args as ApplyArgs),
+          );
+        } catch (error) {
+          if (error instanceof LockBusyError) {
+            return fail("lock_busy", error.message);
+          }
+          throw error;
+        }
+      },
     );
   },
 };
