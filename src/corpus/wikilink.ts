@@ -1,3 +1,5 @@
+import type { WikiPage } from "./pages.js";
+
 /**
  * wikilink 提取（spec #1）。
  * Obsidian 语法：`[[目标]]` 与 `[[目标|显示]]`；目标可带 `#锚点`（解析时剥掉，只保留页面目标）。
@@ -8,8 +10,6 @@ export interface Wikilink {
   target: string;
   /** `[[目标|显示]]` 的显示部分；无 `|` 时为 null。 */
   display: string | null;
-  /** 在正文中的起始偏移（lint 定位用）。 */
-  offset: number;
 }
 
 const WIKILINK_RE = /\[\[([^\[\]]+?)\]\]/gu;
@@ -28,7 +28,7 @@ export function extractWikilinks(body: string): Wikilink[] {
     if (target === "") {
       continue;
     }
-    links.push({ target, display, offset: match.index ?? 0 });
+    links.push({ target, display });
   }
   return links;
 }
@@ -41,17 +41,17 @@ export interface PageRef {
 }
 
 /**
- * 把页面（标题 + 别名）展开为 wikilink 可解析的名字清单。
- * apply/lint 校验「wikilink 目标存在性（含别名解析）」时使用。
+ * 把页面清单展开为 wikilink 可解析的名字索引（WikiPage.names 已含标题 + 别名）。
+ * apply/lint 校验「wikilink 目标存在性（含别名解析）」时使用；
+ * apply 对本批新建/更新页以 { pagePath, names } 子集合成传入。
  */
-export function buildNameIndex(pages: Array<{ pagePath: string; title: string; aliases: string[] }>): PageRef[] {
+export function buildNameIndex(pages: Array<Pick<WikiPage, "pagePath" | "names">>): PageRef[] {
   const refs: PageRef[] = [];
   for (const page of pages) {
-    if (page.title.trim() !== "") {
-      refs.push({ name: page.title, pagePath: page.pagePath });
-    }
-    for (const alias of page.aliases) {
-      refs.push({ name: alias, pagePath: page.pagePath });
+    for (const name of page.names) {
+      if (name.trim() !== "") {
+        refs.push({ name, pagePath: page.pagePath });
+      }
     }
   }
   return refs;

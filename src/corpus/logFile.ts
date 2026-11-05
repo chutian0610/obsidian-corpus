@@ -1,4 +1,5 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
+import { readOptionalFile } from "./fs.js";
 import { LOG_FILE, resolveInCorpus } from "./paths.js";
 
 /**
@@ -73,14 +74,7 @@ export async function appendLog(
     formatted.note = entry.note;
   }
   let chunk = formatLogEntry(formatted);
-  let existing = "";
-  try {
-    existing = await readFile(abs, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const existing = (await readOptionalFile(abs)) ?? "";
   if (existing !== "" && !existing.endsWith("\n\n")) {
     chunk = `\n${chunk}`;
   }
@@ -90,14 +84,9 @@ export async function appendLog(
 /** 读最近 count 条日志（默认全部；status 工具取尾部若干条）。 */
 export async function readLog(corpusRoot: string, count?: number): Promise<LogEntry[]> {
   const abs = resolveInCorpus(corpusRoot, LOG_FILE);
-  let text: string;
-  try {
-    text = await readFile(abs, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
+  const text = await readOptionalFile(abs);
+  if (text === null) {
+    return [];
   }
   const entries = parseLog(text);
   return count === undefined ? entries : entries.slice(-count);

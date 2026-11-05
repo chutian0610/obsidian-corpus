@@ -6,8 +6,8 @@ export interface ToolContext {
 }
 
 /**
- * 工具注册表条目。六工具（init/status/search/ingest_prepare/apply/lint）
- * 由后续 ticket 逐个挂入 TOOLS；本票仅含 ping 占位。
+ * 工具注册表条目。生产工具面固定六工具
+ * （init/status/search/ingest_prepare/apply/lint，spec #1），逐个挂入 TOOLS。
  */
 export interface ToolDefinition {
   name: string;

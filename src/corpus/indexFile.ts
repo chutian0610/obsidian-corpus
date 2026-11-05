@@ -1,5 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
+import { readOptionalFile } from "./fs.js";
 import { INDEX_FILE, resolveInCorpus, toCorpusRel } from "./paths.js";
+import type { PageMeta } from "./frontmatter.js";
+import type { WikiPage } from "./pages.js";
 
 /**
  * Index（索引，index.md）格式（spec #1，一字不差）：
@@ -100,15 +103,8 @@ export function parseIndex(text: string): IndexData {
 /** 读 corpus 根的 index.md；不存在返回空索引。 */
 export async function readIndex(corpusRoot: string): Promise<IndexData> {
   const abs = resolveInCorpus(corpusRoot, INDEX_FILE);
-  try {
-    const text = await readFile(abs, "utf8");
-    return parseIndex(text);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { sources: [], topics: [] };
-    }
-    throw error;
-  }
+  const text = await readOptionalFile(abs);
+  return text === null ? { sources: [], topics: [] } : parseIndex(text);
 }
 
 /** 整体覆写 index.md（由 apply 在单个变更批次内联动调用）。 */
@@ -116,4 +112,36 @@ export async function writeIndex(corpusRoot: string, data: IndexData): Promise<s
   const abs = resolveInCorpus(corpusRoot, INDEX_FILE);
   await writeFile(abs, renderIndex(data), "utf8");
   return toCorpusRel(corpusRoot, abs);
+}
+
+/** index 联动的写入页入参：apply 变更计划中一页的标题与解析后的 frontmatter。 */
+export interface IndexPageInput {
+  title: string;
+  meta: PageMeta;
+}
+
+/** index 联动（apply 用）：移除一页对应的行（按变更前的标题/来源匹配；不在则无操作）。 */
+export function removeIndexEntries(data: IndexData, page: Pick<WikiPage, "title" | "meta">): void {
+  const meta = page.meta;
+  if (meta.type === "source") {
+    const sourcePath = meta.source;
+    const i = data.sources.findIndex((e) => e.title === page.title && e.sourcePath === sourcePath);
+    if (i >= 0) {
+      data.sources.splice(i, 1);
+    }
+  } else {
+    const i = data.topics.findIndex((e) => e.title === page.title);
+    if (i >= 0) {
+      data.topics.splice(i, 1);
+    }
+  }
+}
+
+/** index 联动（apply 用）：登记一个写入页（来源页进 Sources 节、主题页进 Topics 节）。 */
+export function appendIndexEntries(data: IndexData, page: IndexPageInput): void {
+  if (page.meta.type === "source") {
+    data.sources.push({ title: page.title, sourcePath: page.meta.source });
+  } else {
+    data.topics.push({ title: page.title, aliases: page.meta.aliases });
+  }
 }

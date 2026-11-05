@@ -1,10 +1,8 @@
-import { readFile } from "node:fs/promises";
 import type { ToolDefinition } from "./registry.js";
 import { collectWikiPages } from "../corpus/pages.js";
 import { readIndex } from "../corpus/indexFile.js";
-import { splitFrontmatter } from "../corpus/frontmatter.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
-import { INDEX_FILE, resolveInCorpus } from "../corpus/paths.js";
+import { INDEX_FILE } from "../corpus/paths.js";
 
 /** lint 规则标识（findings 的 rule 字段取值）。 */
 export const RULE_BROKEN_WIKILINK = "broken-wikilink";
@@ -39,20 +37,13 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
 
   // frontmatter 无效的页面标题不可信：断链/孤儿/索引对账只在有效页面上做，避免误报
   const validPages = pages.filter((page) => page.issues.length === 0);
-  const nameIndex = buildNameIndex(
-    validPages.map((page) => ({
-      pagePath: page.pagePath,
-      title: page.title,
-      aliases: page.meta.aliases,
-    })),
-  );
+  const nameIndex = buildNameIndex(validPages);
 
   // 规则 1：断链；顺带统计入链（规则 2 共用）。自链不算入链。
+  //（正文复用 collectWikiPages 已剥好的 page.body，与 apply 的删除入链检查同形）
   const inbound = new Map<string, number>();
   for (const page of pages) {
-    const text = await readFile(resolveInCorpus(corpusRoot, page.pagePath), "utf8");
-    const { body } = splitFrontmatter(text);
-    for (const link of extractWikilinks(body)) {
+    for (const link of extractWikilinks(page.body)) {
       const targetPath = resolveWikilinkTarget(nameIndex, link.target);
       if (targetPath === null) {
         findings.push({

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -10,16 +10,17 @@ import {
   resolveInCorpus,
   toCorpusRel,
 } from "../corpus/paths.js";
-import {
-  parseWikiPage,
-  splitFrontmatter,
-  topicTitleFromMeta,
-  type PageMeta,
-} from "../corpus/frontmatter.js";
+import { parseWikiPage, topicTitleFromMeta, type PageMeta } from "../corpus/frontmatter.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
-import { readIndex, writeIndex, type IndexData } from "../corpus/indexFile.js";
+import {
+  appendIndexEntries,
+  readIndex,
+  removeIndexEntries,
+  writeIndex,
+} from "../corpus/indexFile.js";
 import { appendLog } from "../corpus/logFile.js";
 import { collectWikiPages, type WikiPage } from "../corpus/pages.js";
+import { pathExists, readOptionalFile } from "../corpus/fs.js";
 import { gitAdd, gitCommit, gitStatus } from "../corpus/git.js";
 import type { ToolDefinition } from "./registry.js";
 
@@ -123,43 +124,6 @@ function normalizeWikiPath(corpusRoot: string, rawPath: string): { rel: string }
   return { rel };
 }
 
-/** index 联动：移除一页对应的行（按变更前的标题/来源匹配；不在则无操作）。 */
-function removeIndexEntries(data: IndexData, page: WikiPage): void {
-  const meta = page.meta;
-  if (meta.type === "source") {
-    const sourcePath = meta.source;
-    const i = data.sources.findIndex((e) => e.title === page.title && e.sourcePath === sourcePath);
-    if (i >= 0) {
-      data.sources.splice(i, 1);
-    }
-  } else {
-    const i = data.topics.findIndex((e) => e.title === page.title);
-    if (i >= 0) {
-      data.topics.splice(i, 1);
-    }
-  }
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readTextOrNull(p: string): Promise<string | null> {
-  try {
-    return await readFile(p, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-}
-
 /** .trash/ 目标名：保留原文件名，同名冲突时追加序号（.1、.2 …）。 */
 async function planTrashTarget(trashAbs: string, fileName: string): Promise<string> {
   const base = fileName.replace(/\.md$/u, "");
@@ -255,25 +219,20 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
   }
 
   // ③ wikilink 目标校验：目标是「应用后仍存在的页面」的标题或别名
-  const postByName = new Map<string, { pagePath: string; title: string; aliases: string[] }>();
-  for (const page of existingPages) {
-    postByName.set(page.pagePath, {
-      pagePath: page.pagePath,
-      title: page.title,
-      aliases: page.meta.aliases,
-    });
-  }
+  const postPages = new Map<string, Pick<WikiPage, "pagePath" | "names">>(
+    existingPages.map((page) => [page.pagePath, { pagePath: page.pagePath, names: page.names }]),
+  );
   for (const c of planned) {
     if (c.action === "deleted") {
-      postByName.delete(c.rel);
+      postPages.delete(c.rel);
     }
   }
   for (const c of planned) {
     if (c.action !== "deleted" && c.meta) {
-      postByName.set(c.rel, { pagePath: c.rel, title: c.title, aliases: c.meta.aliases });
+      postPages.set(c.rel, { pagePath: c.rel, names: [c.title, ...c.meta.aliases] });
     }
   }
-  const postNameIndex = buildNameIndex([...postByName.values()]);
+  const postNameIndex = buildNameIndex([...postPages.values()]);
 
   for (const c of planned) {
     if (c.action === "deleted" || !c.meta) {
@@ -292,18 +251,15 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
   }
 
   // ③ 删除的入链检查：未随批更新的现存页面若链接被删页，删除会造成断链
+  //（正文复用 collectWikiPages 已剥好的 page.body，与 lint 的断链检查同形）
   const deletedRels = new Set(planned.filter((c) => c.action === "deleted").map((c) => c.rel));
   if (deletedRels.size > 0) {
-    const preNameIndex = buildNameIndex(
-      existingPages.map((p) => ({ pagePath: p.pagePath, title: p.title, aliases: p.meta.aliases })),
-    );
+    const preNameIndex = buildNameIndex(existingPages);
     for (const page of existingPages) {
       if (deletedRels.has(page.pagePath) || seenPaths.has(page.pagePath)) {
         continue;
       }
-      const text = await readFile(resolveInCorpus(corpusRoot, page.pagePath), "utf8");
-      const { body } = splitFrontmatter(text);
-      for (const link of extractWikilinks(body)) {
+      for (const link of extractWikilinks(page.body)) {
         const targetPath = resolveWikilinkTarget(preNameIndex, link.target);
         if (targetPath !== null && deletedRels.has(targetPath)) {
           issues.push({
@@ -322,7 +278,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     return fail("validation_failed", "变更集校验失败，整批拒绝。", { issues });
   }
 
-  // ④ index 联动：按变更前的页面元数据移除旧行，再追加新行
+  // ④ index 联动：按变更前的页面元数据移除旧行，再追加新行（联动逻辑见 indexFile.ts）
   const indexData = await readIndex(corpusRoot);
   for (const c of planned) {
     const old = existingByPath.get(c.rel);
@@ -330,11 +286,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
       removeIndexEntries(indexData, old);
     }
     if (c.action !== "deleted" && c.meta) {
-      if (c.meta.type === "source") {
-        indexData.sources.push({ title: c.title, sourcePath: c.meta.source });
-      } else {
-        indexData.topics.push({ title: c.title, aliases: c.meta.aliases });
-      }
+      appendIndexEntries(indexData, { title: c.title, meta: c.meta });
     }
   }
 
@@ -347,7 +299,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
         continue;
       }
       const abs = resolveInCorpus(corpusRoot, c.rel);
-      const oldText = await readTextOrNull(abs);
+      const oldText = await readOptionalFile(abs);
       await mkdir(path.dirname(abs), { recursive: true });
       await writeFile(abs, c.content as string, "utf8");
       undos.push(
@@ -370,7 +322,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     }
 
     const indexAbs = resolveInCorpus(corpusRoot, INDEX_FILE);
-    const oldIndex = await readTextOrNull(indexAbs);
+    const oldIndex = await readOptionalFile(indexAbs);
     await writeIndex(corpusRoot, indexData);
     undos.push(
       oldIndex === null
@@ -379,7 +331,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     );
 
     const logAbs = resolveInCorpus(corpusRoot, LOG_FILE);
-    const oldLog = await readTextOrNull(logAbs);
+    const oldLog = await readOptionalFile(logAbs);
     await appendLog(corpusRoot, {
       op: "ingest",
       object: title,
@@ -407,18 +359,14 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
       commit: { sha, message: `ingest: ${title}` },
     });
   } catch (error) {
-    // 回滚：逆序恢复已落盘内容，尽力让工作树与暂存区回到 HEAD
+    // 回滚：逆序恢复已落盘内容，尽力让工作树与暂存区回到 HEAD；
+    // 不做任何 gitAdd——失败路径绝不触碰暂存区，保证零残留
     for (const undo of [...undos].reverse()) {
       try {
         await undo();
       } catch {
         // 尽力而为；corpus 受 git 管理，残余可人工恢复
       }
-    }
-    try {
-      await gitAdd(corpusRoot, ["."]);
-    } catch {
-      // 同上
     }
     const message = error instanceof Error ? error.message : String(error);
     return fail("write_failed", `写入阶段失败，已回滚全部变更：${message}`);

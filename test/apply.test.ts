@@ -276,6 +276,31 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     expect(await readRootFile("wiki/LLM 记账.md")).toBeNull();
   });
 
+  it.each([
+    ["非 raw/ 前缀", "notes/x.md"],
+    ["绝对路径（POSIX）", "/tmp/x.md"],
+    ["绝对路径（Windows 盘符）", "C:\\vault\\x.md"],
+    [".. 逃逸", "raw/../x.md"],
+    ["裸 raw/", "raw/"],
+  ])("来源页 source 非法拒绝（%s）", async (_label, badSource) => {
+    fixture = await createCorpusFixture({ raw: { [RAW_NAME]: "原文" } });
+    session = await connectTestClient(fixture.root);
+
+    const bad = SOURCE_PAGE.replace(`source: raw/${RAW_NAME}`, `source: ${badSource}`);
+    const result = await callApply({
+      changes: [{ path: "wiki/LLM 记账.md", content: bad }],
+      log: { title: "坏 source" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.payload.issues).toContainEqual(
+      expect.objectContaining({ code: "frontmatter", field: "source" }),
+    );
+    expect(await gitLog(fixture.root)).toHaveLength(1);
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
+    expect(await readRootFile("wiki/LLM 记账.md")).toBeNull();
+  });
+
   it("删除会在现存页留下断链时拒绝", async () => {
     fixture = await createCorpusFixture({
       wiki: {

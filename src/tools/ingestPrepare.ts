@@ -12,7 +12,7 @@ import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corp
  * 相关页判定（复用共享层名字索引与别名解析）：
  * - source：既有来源页的 source 指向同一份 raw 材料（重复灌入检测）。
  * - title / alias：页面标题或别名作为子串出现在源内容中。
- * - wikilink：源内容中的 [[链接]] 经名字索引解析到既有页面（旧 vault 笔记重灌场景）。
+ * - wikilink：源内容中的 [[链接]] 经名字索引解析到既有页面（重新灌入的旧笔记场景）。
  */
 
 export interface RelatedPage {
@@ -112,10 +112,8 @@ export async function prepareIngest(corpusRoot: string, rawPath: string): Promis
     }
   }
 
-  // 源内容中的 wikilink 解析到既有页面（重新灌入的旧 vault 笔记常带 [[链接]]）
-  const nameIndex = buildNameIndex(
-    pages.map((page) => ({ pagePath: page.pagePath, title: page.title, aliases: page.meta.aliases })),
-  );
+  // 源内容中的 wikilink 解析到既有页面（重新灌入的旧笔记常带 [[链接]]）
+  const nameIndex = buildNameIndex(pages);
   for (const link of extractWikilinks(content)) {
     const target = resolveWikilinkTarget(nameIndex, link.target);
     if (target === null) {

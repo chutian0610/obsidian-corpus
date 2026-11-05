@@ -1,46 +1,26 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ToolDefinition } from "./registry.js";
 import { AGENTS_FILE, INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR, TRASH_DIR } from "../corpus/paths.js";
 import { renderIndex } from "../corpus/indexFile.js";
 import { appendLog } from "../corpus/logFile.js";
+import { CORPUS_AGENTS_MD_INITIAL } from "../corpus/agentsFile.js";
+import { pathExists } from "../corpus/fs.js";
 import { gitAdd, gitCommit, gitInit } from "../corpus/git.js";
 
 /** init 的 commit 消息（spec #1：`init: corpus`）。 */
 export const INIT_COMMIT_MESSAGE = "init: corpus";
 
-/**
- * init 生成的 AGENTS.md 占位骨架（#3）：文件必须就位，正式约定文本归 #6。
- */
-export const AGENTS_PLACEHOLDER = [
-  "# Corpus 维护约定",
-  "",
-  "本文件（AGENTS.md）承载本 Corpus 的维护约定，供人类与 AI agent 共同阅读、共同演进：",
-  "页面类型（来源页/主题页）、frontmatter 要求、index.md 与 log.md 格式、ingest/query/lint 工作流。",
-  "",
-  "> 当前为 init 生成的占位骨架；完整约定文本将在后续维护中写入本文件。",
-  "",
-].join("\n");
-
 /** 骨架目录（git 不跟踪空目录，仅落盘；幂等判断按存在性）。 */
 const SKELETON_DIRS = [RAW_DIR, WIKI_DIR, TRASH_DIR];
 
-/** 骨架文件及其初始内容。 */
+/** 骨架文件及其初始内容（AGENTS.md 落正式约定文本，见 agentsFile.ts）。 */
 function skeletonFiles(): Array<{ relPath: string; content: string }> {
   return [
-    { relPath: AGENTS_FILE, content: AGENTS_PLACEHOLDER },
+    { relPath: AGENTS_FILE, content: CORPUS_AGENTS_MD_INITIAL },
     { relPath: INDEX_FILE, content: renderIndex({ sources: [], topics: [] }) },
     { relPath: LOG_FILE, content: "" },
   ];
-}
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export interface InitResult {
@@ -66,7 +46,7 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
   const existing: string[] = [];
 
   for (const dir of SKELETON_DIRS) {
-    if (await exists(path.join(root, dir))) {
+    if (await pathExists(path.join(root, dir))) {
       existing.push(dir);
     } else {
       await mkdir(path.join(root, dir), { recursive: true });
@@ -75,7 +55,7 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
   }
 
   // 非 git 库才 init（reinit 本身无副作用，但清单要如实区分创建/已存在）
-  const gitDir = await exists(path.join(root, ".git"));
+  const gitDir = await pathExists(path.join(root, ".git"));
   if (gitDir) {
     existing.push("git");
   } else {
@@ -86,7 +66,7 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
   const createdFiles: string[] = [];
   for (const file of skeletonFiles()) {
     const abs = path.join(root, file.relPath);
-    if (await exists(abs)) {
+    if (await pathExists(abs)) {
       existing.push(file.relPath);
     } else {
       await writeFile(abs, file.content, "utf8");

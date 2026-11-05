@@ -1,9 +1,10 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ToolDefinition } from "./registry.js";
 import { readIndex, type SourceIndexEntry, type TopicIndexEntry } from "../corpus/indexFile.js";
 import { RAW_DIR, WIKI_DIR, resolveInCorpus, toCorpusRel } from "../corpus/paths.js";
+import { readOptionalFile } from "../corpus/fs.js";
 
 /**
  * search（spec #1 / #4）：只读查询，Index-first、纯文本匹配（ADR-0003，无向量）。
@@ -120,17 +121,20 @@ async function listFilesRecursive(dirAbs: string): Promise<string[]> {
   return files;
 }
 
-/** 逐行匹配单个文件；同一行多次出现只记一条（去重）。 */
+/** 逐行匹配单个文件；同一行多次出现只记一条（去重）。读失败（含不存在）静默跳过。 */
 async function searchFile(
   absPath: string,
   corpusRoot: string,
   query: string,
   maxHits: number,
 ): Promise<FullTextHit[]> {
-  let text: string;
+  let text: string | null;
   try {
-    text = await readFile(absPath, "utf8");
+    text = await readOptionalFile(absPath);
   } catch {
+    return [];
+  }
+  if (text === null) {
     return [];
   }
   const hits: FullTextHit[] = [];

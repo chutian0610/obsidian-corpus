@@ -128,6 +128,36 @@ function checkStringField(
   return [];
 }
 
+/**
+ * 来源页 source 校验：必须是 `raw/` 开头的相对路径（形如 raw/xxx.md，允许子目录）。
+ * 拒绝绝对路径、含 `..` 的逃逸路径与非 raw/ 前缀路径。
+ */
+function checkSourcePath(raw: Record<string, unknown> | null): FrontmatterIssue[] {
+  const value = raw?.[FM_SOURCE];
+  if (typeof value !== "string" || value.trim() === "") {
+    return [
+      { field: FM_SOURCE, message: `source 必须为非空字符串${value === undefined ? "（缺失）" : ""}` },
+    ];
+  }
+  const p = value.trim().replaceAll("\\", "/");
+  if (p.startsWith("/") || /^[A-Za-z]:/u.test(p)) {
+    return [
+      { field: FM_SOURCE, message: `source 必须为 raw/ 开头的相对路径，不能是绝对路径（实际：${JSON.stringify(value)}）` },
+    ];
+  }
+  if (p === "raw/" || !p.startsWith("raw/")) {
+    return [
+      { field: FM_SOURCE, message: `source 必须为 raw/ 开头的相对路径（形如 raw/xxx.md；实际：${JSON.stringify(value)}）` },
+    ];
+  }
+  if (p.split("/").includes("..")) {
+    return [
+      { field: FM_SOURCE, message: `source 不能包含 ..（不允许路径逃逸；实际：${JSON.stringify(value)}）` },
+    ];
+  }
+  return [];
+}
+
 /** aliases 接受 YAML 列表或单个字符串，统一归一为列表。 */
 function normalizeAliases(raw: Record<string, unknown> | null): {
   aliases: string[];
@@ -155,7 +185,7 @@ export function parseSourcePage(text: string): FrontmatterResult<SourcePageMeta>
   const { raw, body } = splitFrontmatter(text);
   const issues: FrontmatterIssue[] = [
     ...checkType(raw, PAGE_TYPE_SOURCE),
-    ...checkStringField(raw, FM_SOURCE),
+    ...checkSourcePath(raw),
     ...checkStringField(raw, FM_TITLE),
     ...checkCreated(raw),
   ];

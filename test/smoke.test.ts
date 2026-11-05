@@ -3,7 +3,7 @@ import { connectTestClient, createCorpusFixture, type CorpusFixture, type TestSe
 
 /**
  * 冒烟（spec #1 验收：经 MCP 接缝连接 server、列工具）。
- * 本票工具面仅 ping 占位；后续工具票在此接缝上扩展。
+ * 工具面为六工具（init/status/search/ingest_prepare/apply/lint），不再有连通性占位工具。
  */
 
 let fixture: CorpusFixture | null = null;
@@ -17,22 +17,25 @@ afterEach(async () => {
 });
 
 describe("MCP 接缝冒烟", () => {
-  it("客户端连接 server 并列出工具", async () => {
+  it("客户端连接 server 并列出六工具", async () => {
     fixture = await createCorpusFixture();
     session = await connectTestClient(fixture.root);
 
     const tools = await session.client.listTools();
-    const names = tools.tools.map((tool) => tool.name);
-    expect(names).toContain("ping");
+    const names = tools.tools.map((tool) => tool.name).sort();
+    expect(names).toEqual(["apply", "ingest_prepare", "init", "lint", "search", "status"]);
     expect(tools.tools.every((tool) => tool.description.length > 0)).toBe(true);
   });
 
-  it("调用 ping 工具得到 pong", async () => {
+  it("调用 status 工具返回 JSON 概览", async () => {
     fixture = await createCorpusFixture();
     session = await connectTestClient(fixture.root);
 
-    const result = await session.client.callTool({ name: "ping", arguments: {} });
+    const result = await session.client.callTool({ name: "status", arguments: {} });
     expect(result.isError).toBeFalsy();
-    expect(result.content).toEqual([{ type: "text", text: "pong" }]);
+    const text = (result.content as Array<{ type: string; text?: string }>)[0]?.text ?? "";
+    const payload = JSON.parse(text) as { gitRepo: boolean; gitClean: boolean };
+    expect(payload.gitRepo).toBe(true);
+    expect(payload.gitClean).toBe(true);
   });
 });

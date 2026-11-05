@@ -43,7 +43,7 @@ CORPUS_DIR=/path/to/your/corpus node dist/index.js
 | 工具 | 读写 | 说明 |
 | --- | --- | --- |
 | `init` | 写 | 幂等初始化：缺什么补什么（骨架文件 + 目录 + `git init`），已完整则无操作。记 log、记 commit。 |
-| `status` | 只读 | git 干净状态与库概览：`git_clean`、脏文件清单、来源页/主题页计数、最近日志。 |
+| `status` | 只读 | git 干净状态与库概览：`gitClean`、脏文件清单、来源页/主题页计数、最近日志。 |
 | `search` | 只读 | 全文 + 索引查询（`query` + 可选 `scope`：all/wiki/raw），返回路径 + 行号 + 摘录。 |
 | `ingest_prepare` | 只读 | 取一份 raw 材料的内容、stat 与相关既有页面清单，供一次性起草完整变更集。 |
 | `apply` | 写 | 唯一写入口：整批页面变更经校验后与 index 联动、log 追加一起进单个 commit；任一失败整批拒绝。 |

@@ -121,8 +121,21 @@ describe("init", () => {
     const indexText = await readFile(path.join(root, "index.md"), "utf8");
     expect(indexText).toContain("## Sources");
     expect(indexText).toContain("## Topics");
+    // AGENTS.md 落正式约定文本：三层结构、页面 frontmatter、Ingest/Query/Lint 工作流、git 纪律
     const agentsText = await readFile(path.join(root, "AGENTS.md"), "utf8");
-    expect(agentsText).toContain("占位骨架");
+    expect(agentsText).toContain("# Corpus 约定");
+    expect(agentsText).toContain("## 三层结构");
+    expect(agentsText).toContain("Raw sources（`raw/`）");
+    expect(agentsText).toContain("Wiki（`wiki/`）");
+    expect(agentsText).toContain("### Ingest（灌入一份 Raw 材料）");
+    expect(agentsText).toContain("`ingest_prepare`");
+    expect(agentsText).toContain("`apply`");
+    expect(agentsText).toContain("### Query（查询）");
+    expect(agentsText).toContain("### Lint（体检）");
+    expect(agentsText).toContain("type: source");
+    expect(agentsText).toContain("type: topic");
+    expect(agentsText).toContain("## 安全边界与 git 纪律");
+    expect(agentsText).not.toContain("占位");
 
     // git：恰好一个 commit、工作树干净
     const log = await gitLog(root, 10);
@@ -190,13 +203,13 @@ describe("status", () => {
     await fixture.commitSeed();
 
     const status = await callJson<StatusResult>(s, "status");
-    expect(status.git_repo).toBe(true);
-    expect(status.git_clean).toBe(true);
-    expect(status.dirty_files).toEqual([]);
-    expect(status.source_pages).toBe(2);
-    expect(status.topic_pages).toBe(1);
-    expect(status.invalid_pages).toBe(0);
-    const last = status.recent_log[status.recent_log.length - 1];
+    expect(status.gitRepo).toBe(true);
+    expect(status.gitClean).toBe(true);
+    expect(status.dirtyFiles).toEqual([]);
+    expect(status.sourcePages).toBe(2);
+    expect(status.topicPages).toBe(1);
+    expect(status.invalidPages).toBe(0);
+    const last = status.recentLog[status.recentLog.length - 1];
     expect(last?.op).toBe("init");
     expect(last?.object).toBe("corpus");
   });
@@ -217,19 +230,19 @@ describe("status", () => {
     );
 
     const status = await callJson<StatusResult>(s, "status");
-    expect(status.git_clean).toBe(false);
-    expect(status.dirty_files).toContain("wiki/材料A.md");
+    expect(status.gitClean).toBe(false);
+    expect(status.dirtyFiles).toContain("wiki/材料A.md");
   });
 
-  it("未 init 的目录 status：git_repo=false、零计数", async () => {
+  it("未 init 的目录 status：gitRepo=false、零计数", async () => {
     const root = await makeBareRoot();
     session = await connectTestClient(root);
     const status = await callJson<StatusResult>(session, "status");
-    expect(status.git_repo).toBe(false);
-    expect(status.git_clean).toBe(false);
-    expect(status.dirty_files).toEqual([]);
-    expect(status.source_pages).toBe(0);
-    expect(status.topic_pages).toBe(0);
-    expect(status.recent_log).toEqual([]);
+    expect(status.gitRepo).toBe(false);
+    expect(status.gitClean).toBe(false);
+    expect(status.dirtyFiles).toEqual([]);
+    expect(status.sourcePages).toBe(0);
+    expect(status.topicPages).toBe(0);
+    expect(status.recentLog).toEqual([]);
   });
 });

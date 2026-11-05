@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveInCorpus, toCorpusRel, WIKI_DIR } from "./paths.js";
-import { parseWikiPage, topicTitleFromMeta, type PageMeta } from "./frontmatter.js";
+import { parseWikiPage, splitFrontmatter, topicTitleFromMeta, type PageMeta } from "./frontmatter.js";
 
 /** wiki 层的平铺页面清单：status 计数、apply 的 wikilink 目标校验、lint 对账共用。 */
 export interface WikiPage {
@@ -14,6 +14,8 @@ export interface WikiPage {
   title: string;
   /** wikilink 可解析的名字（标题 + 别名）。 */
   names: string[];
+  /** 正文（已剥 frontmatter）；lint 断链检查与 apply 删除入链检查直接复用，免重读文件。 */
+  body: string;
   /** frontmatter 校验问题（lint 报告用；此处不抛错）。 */
   issues: Array<{ field: string; message: string }>;
 }
@@ -38,6 +40,8 @@ export async function collectWikiPages(corpusRoot: string): Promise<WikiPage[]> 
     const abs = path.join(wikiAbs, entry.name);
     const text = await readFile(abs, "utf8");
     const result = parseWikiPage(text);
+    // frontmatter 解析失败时正文仍可用于 wikilink 提取（splitFrontmatter 对坏 YAML 返回原文或剥块后的正文）
+    const { body } = splitFrontmatter(text);
     const pagePath = toCorpusRel(corpusRoot, abs);
     const fileName = entry.name.replace(/\.md$/u, "");
     if (result.ok) {
@@ -51,6 +55,7 @@ export async function collectWikiPages(corpusRoot: string): Promise<WikiPage[]> 
         meta: result.meta,
         title,
         names: [title, ...result.meta.aliases],
+        body: result.body,
         issues: [],
       });
     } else {
@@ -60,6 +65,7 @@ export async function collectWikiPages(corpusRoot: string): Promise<WikiPage[]> 
         meta: { type: "source", source: "", title: "", created: "", aliases: [] },
         title: fileName,
         names: [fileName],
+        body,
         issues: result.issues,
       });
     }
