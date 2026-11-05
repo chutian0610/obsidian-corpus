@@ -20,21 +20,26 @@ CORPUS_DIR=/path/to/your/corpus node dist/index.js
 
 ### ZCode MCP 配置示例
 
-在 ZCode 的 MCP 配置中加入（占位路径换成你本机的仓库与 corpus 位置）：
+在用户级配置 `~/.zcode/cli/config.json` 的 `mcp.servers` 下加入（占位路径换成绝对路径；ZCode 的 MCP schema 严格，未知键会导致 server 被丢弃）：
 
 ```json
 {
-  "mcpServers": {
-    "obsidian-corpus": {
-      "command": "node",
-      "args": ["/path/to/obsidian-corpus/dist/index.js"],
-      "env": {
-        "CORPUS_DIR": "/path/to/your/corpus"
+  "mcp": {
+    "servers": {
+      "obsidian-corpus": {
+        "type": "stdio",
+        "command": "node",
+        "args": ["/path/to/obsidian-corpus/dist/index.js"],
+        "env": {
+          "CORPUS_DIR": "/path/to/your/corpus"
+        }
       }
     }
   }
 }
 ```
+
+（兼容层 `.agents/mcp.json` 用顶层 `mcpServers` 键形，其余字段相同。）
 
 配置后即可在任何支持 MCP 的 agent 中使用；corpus 根的 `AGENTS.md` 记录全部维护约定（页面类型、格式、Ingest/Query/Lint 工作流、git 纪律），跟着库走，不跟着工具版本走。
 
