@@ -45,7 +45,7 @@ CORPUS_DIR=/path/to/your/corpus node dist/index.js
 
 ### 并发语义
 
-同一 corpus 配置多个 server 实例（多个会话/多个 agent）是安全的：写操作（`init`/`apply`）经系统临时目录中的 PID 锁文件互斥——写事务串行，读工具（`status`/`search`/`ingest_prepare`/`lint`）始终可用。持锁进程崩溃后，下一次写操作会自动接管残留锁。等待持锁释放的上限默认 15 秒，可用环境变量 `CORPUS_LOCK_TIMEOUT_MS`（毫秒）覆盖。
+同一 corpus 配置多个 server 实例（多个会话/多个 agent）是安全的：写操作（`init`/`apply`）经系统临时目录中的 PID 锁文件互斥——写事务串行，读工具（`status`/`search`/`ingest_prepare`/`lint`）始终可用。持锁进程崩溃后，下一次写操作会自动接管残留锁。等待持锁释放的上限默认 15 秒，可用环境变量 `CORPUS_LOCK_TIMEOUT_MS`（毫秒）覆盖。agent 的 commit 只暂存本操作的产物（计划页面、`.trash/` 移动目标、`index.md`、`log.md`），人类的未提交改动永远不会被卷入。
 
 ## 工具一览
 

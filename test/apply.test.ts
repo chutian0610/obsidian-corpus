@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   connectTestClient,
@@ -436,5 +438,95 @@ describe("apply：删除走 .trash/", () => {
     expect(await gitLog(fixture.root)).toHaveLength(3);
     expect((await gitLog(fixture.root))[0]?.subject).toBe("ingest: 移除来源页");
     expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+});
+
+describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
+  const execFileAsync = promisify(execFile);
+
+  /** 列出一个 commit 的全部文件（--no-renames 展开 rename 为删除+新增，见真实文件集）。 */
+  async function commitFiles(sha: string): Promise<string[]> {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["show", "--no-renames", "--name-only", "--pretty=format:", sha],
+      { cwd: fixture!.root },
+    );
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .sort();
+  }
+
+  it("新建场景：commit 文件集合恰好等于计划页面 + index + log", async () => {
+    fixture = await createCorpusFixture({ raw: { "暂存材料.md": "# 暂存材料\n\n正文。" } });
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [
+        {
+          path: "wiki/暂存来源页.md",
+          content: [
+            "---",
+            "type: source",
+            "source: raw/暂存材料.md",
+            "title: 暂存材料",
+            "created: 2026-11-05",
+            "---",
+            "",
+            "摘要，链到 [[暂存主题]]。",
+            "",
+          ].join("\n"),
+        },
+        {
+          path: "wiki/暂存主题.md",
+          content: ["---", "type: topic", "created: 2026-11-05", "---", "", "见 [[暂存材料]]。", ""].join(
+            "\n",
+          ),
+        },
+      ],
+      log: { title: "暂存材料" },
+    });
+    expect(result.isError).toBe(false);
+    const sha = result.payload.commit!.sha;
+
+    // 不变量：agent 的 commit 恰好只包含本操作的产物，不多不少
+    expect(await commitFiles(sha)).toEqual([
+      "index.md",
+      "log.md",
+      "wiki/暂存主题.md",
+      "wiki/暂存来源页.md",
+    ]);
+  });
+
+  it("删除场景：commit 含被删原路径与 .trash/ 目标", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "待删主题.md": [
+          "---",
+          "type: topic",
+          "created: 2026-11-05",
+          "---",
+          "",
+          "独立主题，无入链。",
+          "",
+        ].join("\n"),
+      },
+    });
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [{ path: "wiki/待删主题.md", content: null }],
+      log: { title: "删除待删主题" },
+    });
+    expect(result.isError).toBe(false);
+    const sha = result.payload.commit!.sha;
+
+    expect(await commitFiles(sha)).toEqual([
+      ".trash/待删主题.md",
+      "index.md",
+      "log.md",
+      "wiki/待删主题.md",
+    ]);
   });
 });

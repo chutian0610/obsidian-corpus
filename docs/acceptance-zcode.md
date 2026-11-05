@@ -128,6 +128,11 @@ agent 应走 `ingest_prepare` → 起草变更集 → `apply`。判定：
 
 Obsidian「打开文件夹作为仓库」指向测试 corpus：graph view 可见来源页-主题页互链、`[[链接]]` 可点击跳转、中文文件名正常显示。
 
+### UC11 并发与提交边界（可选）
+
+1. **写锁串行**：开第二个 ZCode 会话（指向同一 corpus 的 MCP 配置），两边各放一份不同材料并同时说「ingest」。判定：一个成功；另一个报 `lock_busy`（等待约 15 秒超时），稍后重试即成功，corpus 全程无交叉污染。
+2. **提交边界**：任取一次 ingest 的 commit（`git log` 拿 sha 后 `git show --name-only <sha>`）。判定：文件集合**恰好**等于该次操作产物（来源页/主题页、可能存在的 `.trash/` 移动、`index.md`、`log.md`），不包含任何你的手改文件——agent 永远只提交自己的操作结果。
+
 ## 3. 通过标准
 
 | 用例 | 关键判定 |
