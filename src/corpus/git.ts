@@ -47,9 +47,9 @@ export interface GitStatus {
 /** `git status --porcelain`；干净检查是 apply 的前置安全边界。 */
 export async function gitStatus(cwd: string): Promise<GitStatus> {
   const out = await runGit(cwd, ["status", "--porcelain"]);
+  // porcelain 行固定为 `XY <path>`（XY 两字符状态码，未暂存改动的 X 为空格），不能先 trim 再切
   const dirtyFiles = out
     .split("\n")
-    .map((line) => line.trim())
     .filter((line) => line !== "")
     .map((line) => line.slice(3));
   return { clean: dirtyFiles.length === 0, dirtyFiles };
