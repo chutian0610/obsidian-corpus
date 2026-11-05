@@ -344,8 +344,18 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
         : () => writeFile(logAbs, oldLog, "utf8"),
     );
 
-    // 前置脏树检查保证此刻树上只有本操作的产物，add "." 即只暂存自己的结果
-    await gitAdd(corpusRoot, ["."]);
+    // 显式暂存本操作的全部产物：计划页面（含删除的原路径）、.trash/ 移动目标、index、log。
+    // 不用 add "."：干净检查与暂存之间的窗口期若有人类手改落盘，"." 会把它卷进 agent 的
+    // commit，违反 ADR-0004「不代人类提交」；显式清单让手改保持未暂存，操作后树变脏、
+    // 下次写操作被拦，由人类自行提交。
+    const stagePaths = [
+      ...planned.flatMap((c) =>
+        c.action === "deleted" && c.trashRel ? [c.rel, c.trashRel] : [c.rel],
+      ),
+      INDEX_FILE,
+      LOG_FILE,
+    ];
+    await gitAdd(corpusRoot, stagePaths);
     const sha = await gitCommit(corpusRoot, `ingest: ${title}`);
 
     return textResult({
