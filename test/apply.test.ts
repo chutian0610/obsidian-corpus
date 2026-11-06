@@ -113,12 +113,12 @@ describe("apply：成功路径", () => {
     expect(await readRootFile("wiki/LLM 记账.md")).toBe(SOURCE_PAGE);
     expect(await readRootFile("wiki/个人知识管理.md")).toBe(TOPIC_PAGE);
 
-    // index.md 联动（apply 前不存在，由本批创建）
+    // index.md 联动（apply 前不存在，由本批创建；条目行为 markdown 列表）
     const index = await readRootFile("index.md");
     expect(index).toContain("## Sources");
-    expect(index).toContain("[[LLM 记账]] — raw/karpathy-llm.md");
+    expect(index).toContain("- [[LLM 记账]] — raw/karpathy-llm.md");
     expect(index).toContain("## Topics");
-    expect(index).toContain("[[个人知识管理]]（别名：PKM）");
+    expect(index).toContain("- [[个人知识管理]]（别名：PKM）");
 
     // log.md 追加（op=ingest、对象为标题）
     const log = await readRootFile("log.md");
@@ -189,6 +189,30 @@ describe("apply：成功路径", () => {
     expect(index).not.toContain("[[旧标题]]");
     expect(index).toContain("[[新标题]]");
     expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("ingest: 主题更名");
+  });
+
+  it("旧格式（无列表前缀）index 在任何 apply 后整体重渲染为列表格式", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "演进主题.md": ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
+      },
+    });
+    // 既有 corpus 的无 `- ` 前缀行：解析必须兼容，且重渲染后统一迁移
+    await seedRootFile("index.md", "## Sources\n\n## Topics\n\n[[演进主题]]\n");
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const updated = ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "新正文。", ""].join("\n");
+    const result = await callApply({
+      changes: [{ path: "wiki/演进主题.md", content: updated }],
+      log: { title: "正文更新" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.index).toEqual({ sources: 0, topics: 1 });
+    const index = await readRootFile("index.md");
+    expect(index).toContain("- [[演进主题]]");
+    expect(index).not.toMatch(/^\[\[演进主题\]\]$/mu);
   });
 });
 

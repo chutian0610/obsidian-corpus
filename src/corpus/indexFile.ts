@@ -5,12 +5,15 @@ import type { PageMeta } from "./frontmatter.js";
 import type { WikiPage } from "./pages.js";
 
 /**
- * Index（索引，index.md）格式（spec #1，一字不差）：
- * - `## Sources` 节：每行 `[[来源页标题]] — raw/<路径>`
- * - `## Topics` 节：每行 `[[主题页标题]]`，别名以全角括号附注
+ * Index（索引，index.md）格式（spec #1，条目行加列表前缀便于 markdown 渲染）：
+ * - `## Sources` 节：每行 `- [[来源页标题]] — raw/<路径>`
+ * - `## Topics` 节：每行 `- [[主题页标题]]`，别名以全角括号附注
+ * 解析兼容无前缀的旧格式行——apply 整体重渲染时自动迁移为列表格式。
  */
 export const INDEX_SOURCES_HEADING = "## Sources";
 export const INDEX_TOPICS_HEADING = "## Topics";
+/** 条目行的 markdown 列表前缀。 */
+export const INDEX_ENTRY_BULLET = "- ";
 /** Sources 行：`[[来源页标题]] — raw/<路径>`（em dash 两侧各一空格）。 */
 export const INDEX_SOURCE_SEPARATOR = " — ";
 /** Topics 行别名附注：`[[主题页标题]]（别名：a、b）`。 */
@@ -37,19 +40,20 @@ export interface IndexData {
 }
 
 export function formatSourceEntry(entry: SourceIndexEntry): string {
-  return `[[${entry.title}]]${INDEX_SOURCE_SEPARATOR}${entry.sourcePath}`;
+  return `${INDEX_ENTRY_BULLET}[[${entry.title}]]${INDEX_SOURCE_SEPARATOR}${entry.sourcePath}`;
 }
 
 export function formatTopicEntry(entry: TopicIndexEntry): string {
-  const base = `[[${entry.title}]]`;
+  const base = `${INDEX_ENTRY_BULLET}[[${entry.title}]]`;
   if (entry.aliases.length === 0) {
     return base;
   }
   return `${base}${INDEX_ALIASES_NOTE_PREFIX}${entry.aliases.join(INDEX_ALIASES_JOIN)}${INDEX_ALIASES_NOTE_SUFFIX}`;
 }
 
-const SOURCE_ENTRY_RE = /^\[\[([^\]]+)\]\] — (.+)$/u;
-const TOPIC_ENTRY_RE = /^\[\[([^\]]+)\]\](?:（别名：(.+?)）)?$/u;
+// 前缀可选：兼容既有 corpus 里无 `- ` 的旧格式行。
+const SOURCE_ENTRY_RE = /^(?:- )?\[\[([^\]]+)\]\] — (.+)$/u;
+const TOPIC_ENTRY_RE = /^(?:- )?\[\[([^\]]+)\]\](?:（别名：(.+?)）)?$/u;
 
 /** 渲染整个 index.md 内容（两节顺序固定：Sources 在前、Topics 在后）。 */
 export function renderIndex(data: IndexData): string {
