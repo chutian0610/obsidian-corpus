@@ -126,7 +126,7 @@ agent 应走 `ingest_prepare` → 起草变更集 → `apply`。判定：
 
 ### UC10 Obsidian 检查
 
-Obsidian「打开文件夹作为仓库」指向测试 corpus：graph view 可见来源页-主题页互链、`[[链接]]` 可点击跳转、中文文件名正常显示。
+Obsidian「打开文件夹作为仓库」指向测试 corpus：graph view 可见来源页-主题页互链、`[[链接]]` 可点击跳转、中文文件名正常显示。打开过 Obsidian 之后再跑 `status`：`gitClean` 应仍为 `true`——`.obsidian/`、`.zcode/` 等工具目录由 init 生成的 `.gitignore` 排除（若你的 corpus 在此功能之前初始化，重跑一次 `init` 即幂等补上）。
 
 ### UC11 并发与提交边界（可选）
 
