@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { RAW_DIR } from "./paths.js";
 
 /**
  * git 封装（ADR-0004）：shell git、只在 init/apply 中提交 server 自己的操作结果、
@@ -38,23 +39,42 @@ export async function gitInit(cwd: string): Promise<void> {
 }
 
 export interface GitStatus {
-  /** 工作树是否干净（无任何未提交/未跟踪改动）。 */
+  /** 工作树是否干净（阻塞性变更为零；未跟踪的 raw/ 待灌材料不算脏，见 ADR-0005）。 */
   clean: boolean;
-  /** 脏文件清单（porcelain 路径，含暂存与未跟踪；rename 显示为 `old -> new`）。 */
+  /** 阻塞性脏文件清单（含暂存、修改、删除、未跟踪；rename 显示为 `old -> new`）。 */
   dirtyFiles: string[];
+  /** 未跟踪的 raw/ 待灌材料（不阻塞写操作；apply 引用即携带入库，见 ADR-0005）。 */
+  pendingRaw: string[];
 }
 
-/** `git status --porcelain`；干净检查是 apply 的前置安全边界。 */
+/**
+ * `git status --porcelain --untracked-files=all`；干净检查是 apply 的前置安全边界。
+ * 未跟踪目录展开到文件（`-uall`），否则 `?? raw/` 折叠成目录无法逐文件分类。
+ */
 export async function gitStatus(cwd: string): Promise<GitStatus> {
-  const out = await runGit(cwd, ["status", "--porcelain"]);
+  const out = await runGit(cwd, ["status", "--porcelain", "--untracked-files=all"]);
   // porcelain v1 行为 `XY <path>`（X/Y 为状态码，固定两字符 + 一空格）；未暂存改动的 X 为空格。
   // 不能先 trim 再切：前导空格是状态码的一部分，trim 后 slice(3) 会吃掉路径首字符
-  const dirtyFiles = out
+  const lines = out
     .split("\n")
     .map((line) => line.replace(/\r$/u, ""))
-    .filter((line) => line !== "")
-    .map((line) => line.slice(3));
-  return { clean: dirtyFiles.length === 0, dirtyFiles };
+    .filter((line) => line !== "");
+  const dirtyFiles: string[] = [];
+  const pendingRaw: string[] = [];
+  for (const line of lines) {
+    const xy = line.slice(0, 2);
+    const filePath = line.slice(3);
+    // 未跟踪的 raw/ 新材料是「待灌材料」而非「未保存的手改」（ADR-0005）；
+    // 已跟踪 raw 文件被改动仍属阻塞——Raw 层不可变。
+    const isPendingRaw =
+      xy === "??" && (filePath === RAW_DIR || filePath.startsWith(RAW_DIR + "/"));
+    if (isPendingRaw) {
+      pendingRaw.push(filePath);
+    } else {
+      dirtyFiles.push(filePath);
+    }
+  }
+  return { clean: dirtyFiles.length === 0, dirtyFiles, pendingRaw };
 }
 
 /** 暂存指定路径（pathspec 限 corpus 内相对路径或 `.`）。 */

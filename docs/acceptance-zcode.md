@@ -71,7 +71,7 @@ npm run build   # 产物 dist/index.js
 
 ### UC3 ingest 全流程（核心用例）
 
-先放一份测试材料（自选一篇中文 markdown 笔记，内容最好含 1-2 个可提炼的主题），保存为 corpus 的 `raw/<文件名>.md`。
+先放一份测试材料（自选一篇中文 markdown 笔记，内容最好含 1-2 个可提炼的主题），保存为 corpus 的 `raw/<文件名>.md`——**无需先 git 提交**：未跟踪的新材料视为待灌材料（`status` 的 `pendingRaw`），`apply` 会把它随本次 ingest 一并带入同一个 commit（ADR-0005）。
 
 > 说：「把 raw/<文件名>.md ingest 进 wiki」
 

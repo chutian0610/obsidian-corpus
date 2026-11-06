@@ -58,7 +58,8 @@ export async function createCorpusFixture(
     },
     async commitSeed(message = "test: seed corpus fixture") {
       const status = await gitStatus(root);
-      if (status.clean) {
+      // 待灌 raw 材料（ADR-0005）不算脏，但夹具播种仍需入库（模拟库主人提交全部初始内容）
+      if (status.clean && status.pendingRaw.length === 0) {
         return "";
       }
       await gitAdd(root, ["."]);
