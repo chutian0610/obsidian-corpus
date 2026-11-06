@@ -115,7 +115,7 @@ agent 应走 `ingest_prepare` → 起草变更集 → `apply`。判定：
 
 1. 手动编辑任一 wiki 页（不提交）
 2. 放第二份材料进 `raw/`，对 agent 说「ingest 这份」
-3. **判定**：apply 被整批拒绝，错误里列出你的脏文件；`git status` 确认 agent 没有写任何东西
+3. **判定**：`ingest_prepare` 即被拒并列出你的脏文件（#17 后前置拦截，不再等 apply）；`git status` 确认 agent 没有写任何东西
 4. `git add -A && git commit` 你的手改，再让 agent 重试 → 成功
 
 ### UC9 删除走 .trash/
