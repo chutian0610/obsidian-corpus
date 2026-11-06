@@ -71,6 +71,8 @@ export const CORPUS_AGENTS_MD_INITIAL = [
   "- git 纪律：人类手改后自行提交；agent 每次操作前检查工作树干净，不干净即停并列出脏文件提醒库主人。",
   "  agent 绝不代人类提交其改动；agent 自己的每次操作对应一个独立 commit（消息如 `ingest: <标题>`），",
   "  任何一次坏操作都能被整体 revert。",
+  "- 编辑器/会话等工具的机器本地目录（`.obsidian/`、`.zcode/`、`.vscode/`）与 `.DS_Store` 由根 `.gitignore` 排除；",
+  "  `.gitignore` 属库主人，可自行调整；`.trash/` 保持跟踪（删除审计依赖 git 历史）。",
   "- Corpus 是独立本地私有目录，绝不推送到公开 remote。",
   "",
 ].join("\n");

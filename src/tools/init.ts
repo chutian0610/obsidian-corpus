@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ToolDefinition } from "./registry.js";
-import { AGENTS_FILE, INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR, TRASH_DIR } from "../corpus/paths.js";
+import { AGENTS_FILE, GITIGNORE_FILE, INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR, TRASH_DIR } from "../corpus/paths.js";
 import { renderIndex } from "../corpus/indexFile.js";
 import { appendLog } from "../corpus/logFile.js";
 import { CORPUS_AGENTS_MD_INITIAL } from "../corpus/agentsFile.js";
@@ -21,8 +21,15 @@ function skeletonFiles(): Array<{ relPath: string; content: string }> {
     { relPath: AGENTS_FILE, content: CORPUS_AGENTS_MD_INITIAL },
     { relPath: INDEX_FILE, content: renderIndex({ sources: [], topics: [] }) },
     { relPath: LOG_FILE, content: "" },
+    { relPath: GITIGNORE_FILE, content: GITIGNORE_INITIAL },
   ];
 }
+
+/**
+ * .gitignore 初始内容：排除编辑器/会话等工具拉出的机器本地目录（#12）。
+ * `.trash/` 刻意保持跟踪——删除审计依赖 git 历史。已存在的 .gitignore 绝不覆盖，属库主人。
+ */
+const GITIGNORE_INITIAL = [".DS_Store", ".obsidian/", ".zcode/", ".vscode/", ""].join("\n");
 
 export interface InitResult {
   /** 本次创建的骨架项（文件相对路径、目录名与 `git`）。 */
@@ -86,8 +93,8 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
     object: "corpus",
     note: `初始化骨架：${createdFiles.join("、")}`,
   });
-  // 只提交 server 自己创建的骨架文件，绝不代人类提交其余改动（ADR-0004）
-  await gitAdd(root, [AGENTS_FILE, INDEX_FILE, LOG_FILE]);
+  // 只提交 server 自己产生的变更（本次创建的骨架文件 + 必然追加的 log），绝不代人类提交其余改动（ADR-0004）
+  await gitAdd(root, [...createdFiles, LOG_FILE]);
   const sha = await gitCommit(root, INIT_COMMIT_MESSAGE);
   return { created, existing, committed: true, commit: sha };
 }
@@ -96,7 +103,7 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
 export const initTool: ToolDefinition = {
   name: "init",
   description:
-    "幂等初始化 corpus 骨架（AGENTS.md/index.md/log.md/raw//wiki//.trash/，非 git 库则 git init）。" +
+    "幂等初始化 corpus 骨架（AGENTS.md/index.md/log.md/.gitignore/raw//wiki//.trash/，非 git 库则 git init）。" +
     "缺什么补什么；已有骨架文件落地时追加 log 并生成单个 commit（`init: corpus`）；已完整则无操作。",
   register(server, ctx) {
     server.registerTool(

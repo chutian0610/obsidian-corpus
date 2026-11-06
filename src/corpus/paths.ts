@@ -7,6 +7,7 @@ export const TRASH_DIR = ".trash";
 export const INDEX_FILE = "index.md";
 export const LOG_FILE = "log.md";
 export const AGENTS_FILE = "AGENTS.md";
+export const GITIGNORE_FILE = ".gitignore";
 
 /** 路径解析后落在 corpus 根外时抛出，防逃逸是硬保证。 */
 export class CorpusPathError extends Error {

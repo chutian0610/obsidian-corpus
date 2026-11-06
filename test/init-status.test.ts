@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { connectTestClient, createCorpusFixture, type CorpusFixture, type TestSession } from "./harness.js";
@@ -108,14 +108,14 @@ describe("init", () => {
 
     const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
     expect(result.created.sort()).toEqual(
-      [".trash", "git", "AGENTS.md", "index.md", "log.md", "raw", "wiki"].sort(),
+      [".trash", "git", "AGENTS.md", "index.md", "log.md", ".gitignore", "raw", "wiki"].sort(),
     );
     expect(result.existing).toEqual([]);
     expect(result.committed).toBe(true);
     expect(result.commit).toMatch(/^[0-9a-f]{40}$/u);
 
     // 落盘骨架齐全
-    for (const entry of ["AGENTS.md", "index.md", "log.md", "raw", "wiki", ".trash", ".git"]) {
+    for (const entry of ["AGENTS.md", "index.md", "log.md", ".gitignore", "raw", "wiki", ".trash", ".git"]) {
       await expect(stat(path.join(root, entry))).resolves.toBeTruthy();
     }
     const indexText = await readFile(path.join(root, "index.md"), "utf8");
@@ -135,6 +135,7 @@ describe("init", () => {
     expect(agentsText).toContain("type: source");
     expect(agentsText).toContain("type: topic");
     expect(agentsText).toContain("## 安全边界与 git 纪律");
+    expect(agentsText).toContain(".gitignore");
     expect(agentsText).not.toContain("占位");
 
     // git：恰好一个 commit、工作树干净
@@ -161,7 +162,7 @@ describe("init", () => {
 
     expect(again.created).toEqual([]);
     expect(again.existing.sort()).toEqual(
-      [".trash", "git", "AGENTS.md", "index.md", "log.md", "raw", "wiki"].sort(),
+      [".trash", "git", "AGENTS.md", "index.md", "log.md", ".gitignore", "raw", "wiki"].sort(),
     );
     expect(again.committed).toBe(false);
     expect(again.commit).toBeNull();
@@ -244,5 +245,41 @@ describe("status", () => {
     expect(status.sourcePages).toBe(0);
     expect(status.topicPages).toBe(0);
     expect(status.recentLog).toEqual([]);
+  });
+});
+
+describe("init 的 .gitignore（#12）", () => {
+  it("创建默认 .gitignore；工具目录不再弄脏工作树", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await withGitIdentity(() => callJson<InitResult>(s, "init"));
+    const text = await readFile(path.join(root, ".gitignore"), "utf8");
+    expect(text).toContain(".DS_Store");
+    expect(text).toContain(".obsidian/");
+    expect(text).toContain(".zcode/");
+    expect(text).toContain(".vscode/");
+    // .trash/ 保持跟踪（删除审计依赖 git 历史），不得进 ignore
+    expect(text).not.toContain(".trash");
+
+    // 模拟 Obsidian 打开 corpus 拉出的配置目录：status 应保持干净
+    await mkdir(path.join(root, ".obsidian"), { recursive: true });
+    await writeFile(path.join(root, ".obsidian", "workspace.json"), "{}", "utf8");
+    const status = await callJson<StatusResult>(s, "status");
+    expect(status.gitClean).toBe(true);
+    expect(status.dirtyFiles).toEqual([]);
+  });
+
+  it("已有 .gitignore 时 init 不覆盖（库主人文件）", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await writeFile(path.join(root, ".gitignore"), "custom/\n", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+    expect(result.existing).toContain(".gitignore");
+    expect(result.created).not.toContain(".gitignore");
+    expect(await readFile(path.join(root, ".gitignore"), "utf8")).toBe("custom/\n");
   });
 });
