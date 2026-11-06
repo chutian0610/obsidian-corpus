@@ -10,7 +10,7 @@ import {
   resolveInCorpus,
   toCorpusRel,
 } from "../corpus/paths.js";
-import { parseWikiPage, topicTitleFromMeta, type PageMeta } from "../corpus/frontmatter.js";
+import { PAGE_TYPE_SOURCE, parseWikiPage, topicTitleFromMeta, type PageMeta } from "../corpus/frontmatter.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
 import {
   appendIndexEntries,
@@ -344,14 +344,21 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
         : () => writeFile(logAbs, oldLog, "utf8"),
     );
 
-    // 显式暂存本操作的全部产物：计划页面（含删除的原路径）、.trash/ 移动目标、index、log。
-    // 不用 add "."：干净检查与暂存之间的窗口期若有人类手改落盘，"." 会把它卷进 agent 的
-    // commit，违反 ADR-0004「不代人类提交」；显式清单让手改保持未暂存，操作后树变脏、
-    // 下次写操作被拦，由人类自行提交。
+    // 显式暂存本操作的全部产物：计划页面（含删除的原路径）、.trash/ 移动目标、被引用的
+    // 待灌原料、index、log。不用 add "."：窗口期人类手改不得被卷进 agent 的 commit（ADR-0004）。
+    // 待灌原料携带（ADR-0005）：本批来源页 source 引用、且尚未跟踪的 raw 文件与 wiki 产物
+    // 进同一个 commit——一次 ingest = 原料 + 知识编译原子入库。
+    const sourceRefs = new Set(
+      planned.flatMap((c) =>
+        c.meta?.type === PAGE_TYPE_SOURCE && c.meta.source ? [c.meta.source] : [],
+      ),
+    );
+    const carryRaw = status.pendingRaw.filter((p) => sourceRefs.has(p));
     const stagePaths = [
       ...planned.flatMap((c) =>
         c.action === "deleted" && c.trashRel ? [c.rel, c.trashRel] : [c.rel],
       ),
+      ...carryRaw,
       INDEX_FILE,
       LOG_FILE,
     ];

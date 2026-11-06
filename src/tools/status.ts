@@ -10,10 +10,12 @@ export const STATUS_RECENT_LOG_COUNT = 5;
 export interface StatusResult {
   /** 是否 git 库；false 意味着应先 init。 */
   gitRepo: boolean;
-  /** 工作树是否干净（agent 写操作的前置安全边界，ADR-0004）。 */
+  /** 工作树是否干净（agent 写操作的前置安全边界，ADR-0004；未跟踪 raw 待灌材料不算脏，ADR-0005）。 */
   gitClean: boolean;
-  /** 脏文件清单（含暂存与未跟踪）。 */
+  /** 阻塞性脏文件清单（含暂存与未跟踪；不含待灌 raw 材料）。 */
   dirtyFiles: string[];
+  /** 未跟踪的 raw/ 待灌材料清单（可直接 ingest，无需先 git 提交）。 */
+  pendingRaw: string[];
   /** 来源页计数。 */
   sourcePages: number;
   /** 主题页计数。 */
@@ -33,10 +35,12 @@ export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
   let gitRepo = true;
   let clean = false;
   let dirtyFiles: string[] = [];
+  let pendingRaw: string[] = [];
   try {
     const status = await gitStatus(corpusDir);
     clean = status.clean;
     dirtyFiles = status.dirtyFiles;
+    pendingRaw = status.pendingRaw;
   } catch (error) {
     if (!(error instanceof GitError)) {
       throw error;
@@ -55,6 +59,7 @@ export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
     gitRepo,
     gitClean: clean,
     dirtyFiles,
+    pendingRaw,
     sourcePages: sourcePages.length,
     topicPages: topicPages.length,
     invalidPages: invalidPages.length,
@@ -66,8 +71,8 @@ export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
 export const statusTool: ToolDefinition = {
   name: "status",
   description:
-    "只读返回 corpus 概览：git 是否干净与脏文件清单、来源页/主题页计数、最近日志条目。" +
-    "agent 在写操作前调用以自检 git 干净边界；未 init 的目录返回 gitRepo=false。",
+    "只读返回 corpus 概览：git 是否干净与阻塞性脏文件清单、未跟踪的 raw/ 待灌材料清单（pendingRaw，可直接 ingest）、" +
+    "来源页/主题页计数、最近日志条目。agent 在写操作前调用以自检 git 干净边界；未 init 的目录返回 gitRepo=false。",
   register(server, ctx) {
     server.registerTool(
       this.name,

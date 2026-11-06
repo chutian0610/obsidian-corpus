@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { connectTestClient, createCorpusFixture, type CorpusFixture, type TestSession } from "./harness.js";
 import { writeIndex } from "../src/corpus/indexFile.js";
 import { gitStatus } from "../src/corpus/git.js";
@@ -323,5 +326,66 @@ describe("只读边界", () => {
 
     const status = await gitStatus(fixture.root);
     expect(status.clean).toBe(true);
+  });
+});
+
+describe("ingest_prepare 的 git 边界前置（#17）", () => {
+  let bareRoot: string | null = null;
+
+  afterEach(async () => {
+    if (bareRoot) {
+      await rm(bareRoot, { recursive: true, force: true });
+      bareRoot = null;
+    }
+  });
+
+  it("脏树（未提交手改）：直接拒绝并列出脏文件，不返回内容", async () => {
+    const { session, fixture: fx } = await setup();
+    // 模拟人类手改未提交（未跟踪 wiki 文件属阻塞性脏，ADR-0005）
+    await writeFile(
+      path.join(fx.root, "wiki", "手写草稿.md"),
+      "---\ntype: topic\ncreated: 2026-11-06\n---\n\n手写内容。\n",
+      "utf8",
+    );
+
+    const result = (await session.client.callTool({
+      name: "ingest_prepare",
+      arguments: { rawPath: "raw/transformer论文.md" },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text: string }).text;
+    expect(text).toContain("不干净");
+    expect(text).toContain("wiki/手写草稿.md");
+    expect(text).not.toContain("self-attention");
+  });
+
+  it("非 git 库：直接拒绝并提示先 init", async () => {
+    bareRoot = await mkdtemp(path.join(tmpdir(), "obsidian-corpus-prepare-"));
+    await mkdir(path.join(bareRoot, "raw"), { recursive: true });
+    await writeFile(path.join(bareRoot, "raw", "材料.md"), "# 材料\n", "utf8");
+    const session2 = await connectTestClient(bareRoot);
+
+    const result = (await session2.client.callTool({
+      name: "ingest_prepare",
+      arguments: { rawPath: "raw/材料.md" },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text: string }).text).toContain("init");
+    await session2.close();
+  });
+
+  it("干净树：照常返回内容，并透出其余待灌材料（pendingRaw）", async () => {
+    const { session, fixture: fx } = await setup();
+    await writeFile(path.join(fx.root, "raw", "另一份.md"), "# 另一份\n", "utf8");
+
+    const payload = parseJson(
+      await session.client.callTool({
+        name: "ingest_prepare",
+        arguments: { rawPath: "raw/transformer论文.md" },
+      }),
+    );
+    expect(payload.content).toContain("self-attention");
+    expect(payload.git.clean).toBe(true);
+    expect(payload.git.pendingRaw).toEqual(["raw/另一份.md"]);
   });
 });

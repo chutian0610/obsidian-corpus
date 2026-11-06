@@ -71,7 +71,7 @@ npm run build   # 产物 dist/index.js
 
 ### UC3 ingest 全流程（核心用例）
 
-先放一份测试材料（自选一篇中文 markdown 笔记，内容最好含 1-2 个可提炼的主题），保存为 corpus 的 `raw/<文件名>.md`。
+先放一份测试材料（自选一篇中文 markdown 笔记，内容最好含 1-2 个可提炼的主题），保存为 corpus 的 `raw/<文件名>.md`——**无需先 git 提交**：未跟踪的新材料视为待灌材料（`status` 的 `pendingRaw`），`apply` 会把它随本次 ingest 一并带入同一个 commit（ADR-0005）。
 
 > 说：「把 raw/<文件名>.md ingest 进 wiki」
 
@@ -115,7 +115,7 @@ agent 应走 `ingest_prepare` → 起草变更集 → `apply`。判定：
 
 1. 手动编辑任一 wiki 页（不提交）
 2. 放第二份材料进 `raw/`，对 agent 说「ingest 这份」
-3. **判定**：apply 被整批拒绝，错误里列出你的脏文件；`git status` 确认 agent 没有写任何东西
+3. **判定**：`ingest_prepare` 即被拒并列出你的脏文件（#17 后前置拦截，不再等 apply）；`git status` 确认 agent 没有写任何东西
 4. `git add -A && git commit` 你的手改，再让 agent 重试 → 成功
 
 ### UC9 删除走 .trash/
