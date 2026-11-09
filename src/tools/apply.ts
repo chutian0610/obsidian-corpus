@@ -28,8 +28,9 @@ import type { ToolDefinition } from "./registry.js";
 /**
  * apply：唯一写入口（spec #1、#5）。
  * 整批提交 wiki/ 页面变更（整页内容；content:null = 删除→移入 .trash/），
- * 校验（frontmatter 必填、wikilink 目标存在或本批新建、路径约束、不碰 raw/）
+ * 校验（frontmatter 必填、wikilink 目标存在或本批新建、路径约束、不碰 raw/、文件名合法字符）
  * 全部通过后才落盘，变更 + index.md 联动 + log.md 追加进单个 commit（`ingest: <标题>`）。
+ * `![[嵌入]]` 不要求目标是 wiki 页面；代码块/行内代码里的 `[[ ]]` 不算链接（#21）。
  * all-or-nothing：任一步失败整批拒绝，corpus 零变更、零残留。
  */
 
@@ -121,6 +122,10 @@ function normalizeWikiPath(corpusRoot: string, rawPath: string): { rel: string }
   }
   if (rel.slice(prefix.length).includes("/")) {
     return { error: `wiki/ 为平铺布局，不接受子目录路径：${rel}` };
+  }
+  // Windows 非法文件名字符：corpus 可能被拷贝到任何机器，提前拒（#21）
+  if (/[:*?"<>|]/u.test(rel.slice(prefix.length))) {
+    return { error: `wiki 页文件名不得包含 Windows 非法字符 : * ? " < > |：${rel}` };
   }
   return { rel };
 }
@@ -240,6 +245,10 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
       continue;
     }
     for (const link of extractWikilinks(c.body)) {
+      // 嵌入（![[...]]）目标是附件或页面：附件不是 wiki 页面，不要求存在（#21）
+      if (link.embed) {
+        continue;
+      }
       if (resolveWikilinkTarget(postNameIndex, link.target) === null) {
         issues.push({
           code: "broken_wikilink",
