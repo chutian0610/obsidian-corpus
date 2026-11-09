@@ -29,7 +29,8 @@ import type { ToolDefinition } from "./registry.js";
  * apply：唯一写入口（spec #1、#5）。
  * 整批提交 wiki/ 页面变更（整页内容；content:null = 删除→移入 .trash/），
  * 校验（frontmatter 必填、wikilink 目标存在或本批新建、路径约束、不碰 raw/、文件名合法字符）
- * 全部通过后才落盘，变更 + index.md 联动 + log.md 追加进单个 commit（`ingest: <标题>`）。
+ * 全部通过后才落盘，变更 + index.md 联动 + log.md 追加进单个 commit（`<op>: <标题>`，op 取
+ * ingest 或 refactor——refactor 用于不涉及新材料的纯 wiki 重组，#24）。
  * `![[嵌入]]` 不要求目标是 wiki 页面；代码块/行内代码里的 `[[ ]]` 不算链接（#21）。
  * all-or-nothing：任一步失败整批拒绝，corpus 零变更、零残留。
  */
@@ -46,7 +47,7 @@ const inputSchema = {
     )
     .min(1),
   log: z.object({
-    /** 日志操作类型，apply 固定 ingest。 */
+    /** 日志操作类型：ingest（灌入新材料）或 refactor（纯 wiki 重组，#24）；缺省 ingest。 */
     op: z.string().optional(),
     /** 日志对象（也是 commit 消息标题）。 */
     title: z.string().optional(),
@@ -54,6 +55,9 @@ const inputSchema = {
     note: z.string().optional(),
   }),
 };
+
+/** apply 允许的操作类型（#24）：ingest=知识灌入；refactor=不涉及新材料的 wiki 重组（拆并页/改写/修正）。 */
+const APPLY_OPS = new Set(["ingest", "refactor"]);
 
 type ApplyArgs = {
   changes: Array<{ path: string; content: string | null }>;
@@ -155,11 +159,14 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
 
   const issues: Issue[] = [];
 
-  // ② 日志条目校验（op 固定 ingest；title 兼作 log 对象与 commit 标题）
-  const op = args.log.op ?? "ingest";
+  // ② 日志条目校验（op 词表见 APPLY_OPS；title 兼作 log 对象与 commit 标题）
+  const opRaw = args.log.op ?? "ingest";
   const title = (args.log.title ?? "").trim();
-  if (op !== "ingest") {
-    issues.push({ code: "invalid_log", message: `apply 的日志 op 只能为 ingest（实际：${op}）` });
+  if (!APPLY_OPS.has(opRaw)) {
+    issues.push({
+      code: "invalid_log",
+      message: `apply 的日志 op 只能为 ingest 或 refactor（实际：${opRaw}）`,
+    });
   }
   if (title === "") {
     issues.push({ code: "invalid_log", message: "log.title 不能为空" });
@@ -345,6 +352,9 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     return fail("validation_failed", "变更集校验失败，整批拒绝。", { issues });
   }
 
+  // 校验已拒非法 op，这里收窄为 LogOp 词表成员
+  const op = opRaw === "refactor" ? "refactor" : "ingest";
+
   // ④ index 联动：按变更前的页面元数据移除旧行，再追加新行（联动逻辑见 indexFile.ts）
   const indexData = await readIndex(corpusRoot);
   for (const c of planned) {
@@ -400,7 +410,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     const logAbs = resolveInCorpus(corpusRoot, LOG_FILE);
     const oldLog = await readOptionalFile(logAbs);
     await appendLog(corpusRoot, {
-      op: "ingest",
+      op,
       object: title,
       ...(args.log.note !== undefined ? { note: args.log.note } : {}),
     });
@@ -429,7 +439,7 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
       LOG_FILE,
     ];
     await gitAdd(corpusRoot, stagePaths);
-    const sha = await gitCommit(corpusRoot, `ingest: ${title}`);
+    const sha = await gitCommit(corpusRoot, `${op}: ${title}`);
 
     return textResult({
       ok: true,
@@ -439,8 +449,8 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
         ...(c.action === "deleted" && c.trashRel ? { trashPath: c.trashRel } : {}),
       })),
       index: { sources: indexData.sources.length, topics: indexData.topics.length },
-      log: { op: "ingest", object: title },
-      commit: { sha, message: `ingest: ${title}` },
+      log: { op, object: title },
+      commit: { sha, message: `${op}: ${title}` },
     });
   } catch (error) {
     // 回滚：逆序恢复已落盘内容，尽力让工作树与暂存区回到 HEAD；
@@ -461,10 +471,10 @@ export const applyTool: ToolDefinition = {
   name: "apply",
   description:
     "唯一写入口：整批提交 wiki/ 页面变更并原子落库。入参为变更集（path 限 wiki/ 内平铺 .md、" +
-    "整页内容；content 为 null 表示删除，文件移入 .trash/）与日志条目（op 固定 ingest、title 兼作 commit 标题）。" +
-    "流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、wikilink 目标存在或本批新建、" +
-    "title=文件名、名字唯一（重名建议消歧义后缀）、路径约束与文件名合法字符、不碰 raw/）" +
-    "→ 变更 + index.md 联动 + log.md 追加进单个 commit（ingest: <标题>）。任一步失败整批拒绝，corpus 零变更。",
+    "整页内容；content 为 null 表示删除，文件移入 .trash/）与日志条目（op 取 ingest 或 refactor（纯 wiki 重组）、" +
+    "title 兼作 commit 标题）。流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、" +
+    "wikilink 目标存在或本批新建、title=文件名、名字唯一（重名建议消歧义后缀）、路径约束与文件名合法字符、不碰 raw/）" +
+    "→ 变更 + index.md 联动 + log.md 追加进单个 commit（<op>: <标题>）。任一步失败整批拒绝，corpus 零变更。",
   register(server, ctx) {
     server.registerTool(
       this.name,

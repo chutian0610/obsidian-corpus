@@ -490,7 +490,8 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
   });
 
   it.each([
-    ["op 非 ingest", { op: "init", title: "标题" }],
+    ["op 非法（init）", { op: "init", title: "标题" }],
+    ["op 非法（edit）", { op: "edit", title: "标题" }],
     ["title 为空", { title: "  " }],
     ["title 含 |", { title: "坏|标题" }],
   ])("日志条目非法拒绝（%s）", async (_label, log) => {
@@ -502,6 +503,31 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     expect(result.isError).toBe(true);
     expect(result.payload.issues?.some((i) => i.code === "invalid_log")).toBe(true);
     expect(await gitLog(fixture.root)).toHaveLength(1);
+  });
+
+  it("op=refactor：log 条目与 commit 消息前缀联动（#24）", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "待改写.md": ["---", "type: topic", "created: 2026-10-01", "title: 待改写", "---", "旧正文。", ""].join("\n"),
+      },
+    });
+    session = await connectTestClient(fixture.root);
+
+    const updated = ["---", "type: topic", "created: 2026-10-01", "title: 待改写", "---", "改写后的正文。", ""].join("\n");
+    const result = await callApply({
+      changes: [{ path: "wiki/待改写.md", content: updated }],
+      log: { op: "refactor", title: "改写待改写页", note: "纯重组，不涉及新材料" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.commit?.message).toBe("refactor: 改写待改写页");
+    expect(result.payload.log).toEqual({ op: "refactor", object: "改写待改写页" });
+
+    const log = await readRootFile("log.md");
+    expect(log).toMatch(/\] refactor \| 改写待改写页$/mu);
+    expect(log).toContain("纯重组，不涉及新材料");
+    expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("refactor: 改写待改写页");
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
   });
 
   it("title 与文件名不一致拒绝（title_filename_mismatch）", async () => {
