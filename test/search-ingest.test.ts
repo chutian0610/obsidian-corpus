@@ -389,3 +389,108 @@ describe("ingest_prepare 的 git 边界前置（#17）", () => {
     expect(payload.git.pendingRaw).toEqual(["raw/另一份.md"]);
   });
 });
+
+describe("ingest_prepare 的 raw 门禁与分段读（#20）", () => {
+  it("非 .md/.txt 扩展名直接拒，错误含转存指引", async () => {
+    const { session, fixture: fx } = await setup();
+    await fx.seedRaw("报告.pdf", "%PDF-1.4 fake");
+    await fx.commitSeed();
+
+    const result = (await session.client.callTool({
+      name: "ingest_prepare",
+      arguments: { rawPath: "raw/报告.pdf" },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    const text = (result.content?.[0] as { text: string }).text;
+    expect(text).toContain(".md/.txt");
+    expect(text).toContain("转存");
+  });
+
+  it("扩展名正确但内容含 NUL：判二进制拒绝", async () => {
+    const { session, fixture: fx } = await setup();
+    await fx.seedRaw("伪装.md", "# 标题\n\u0000\u0001\u0002\n");
+    await fx.commitSeed();
+
+    const result = (await session.client.callTool({
+      name: "ingest_prepare",
+      arguments: { rawPath: "raw/伪装.md" },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text: string }).text).toContain("二进制");
+  });
+
+  it("大材料默认取前 2000 行；nextStartLine 指向后续窗口", async () => {
+    const { session, fixture: fx } = await setup();
+    const big = Array.from({ length: 5000 }, (_, i) => `第${i + 1}行：内容`).join("\n");
+    await fx.seedRaw("大材料.md", big);
+    await fx.commitSeed();
+
+    const first = parseJson(
+      await session.client.callTool({ name: "ingest_prepare", arguments: { rawPath: "raw/大材料.md" } }),
+    );
+    expect(first.contentWindow).toEqual({
+      startLine: 1,
+      endLine: 2000,
+      totalLines: 5000,
+      truncated: true,
+      nextStartLine: 2001,
+    });
+    expect(first.content).toContain("第1行");
+    expect(first.content).toContain("第2000行");
+    expect(first.content).not.toContain("第2001行");
+
+    const tail = parseJson(
+      await session.client.callTool({
+        name: "ingest_prepare",
+        arguments: { rawPath: "raw/大材料.md", startLine: 4500 },
+      }),
+    );
+    expect(tail.contentWindow).toEqual({
+      startLine: 4500,
+      endLine: 5000,
+      totalLines: 5000,
+      truncated: false,
+      nextStartLine: null,
+    });
+    expect(tail.content).toContain("第5000行");
+  });
+
+  it("startLine 越过 EOF：空窗口不报错，totalLines 如实", async () => {
+    const { session, fixture: fx } = await setup();
+    await fx.seedRaw("小材料.md", "只有一行");
+    await fx.commitSeed();
+
+    const payload = parseJson(
+      await session.client.callTool({
+        name: "ingest_prepare",
+        arguments: { rawPath: "raw/小材料.md", startLine: 6000 },
+      }),
+    );
+    expect(payload.content).toBe("");
+    expect(payload.contentWindow.totalLines).toBe(1);
+    expect(payload.contentWindow.endLine).toBeNull();
+    expect(payload.contentWindow.truncated).toBe(false);
+  });
+
+  it("内容查重：相同内容不同文件名互报 duplicateOf", async () => {
+    const { session, fixture: fx } = await setup();
+    await fx.seedRaw("副本.md", RAW_TRANSFORMER);
+    await fx.commitSeed();
+
+    const dup = parseJson(
+      await session.client.callTool({
+        name: "ingest_prepare",
+        arguments: { rawPath: "raw/transformer论文.md" },
+      }),
+    );
+    expect(dup.duplicateOf).toEqual(["raw/副本.md"]);
+
+    const unique = parseJson(
+      await session.client.callTool({
+        name: "ingest_prepare",
+        arguments: { rawPath: "raw/周会记录.md" },
+      }),
+    );
+    expect(unique.duplicateOf).toEqual([]);
+  });
+});
