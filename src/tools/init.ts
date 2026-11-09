@@ -1,10 +1,15 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ToolDefinition } from "./registry.js";
 import { AGENTS_FILE, GITIGNORE_FILE, INDEX_FILE, LOG_FILE, RAW_DIR, WIKI_DIR, TRASH_DIR } from "../corpus/paths.js";
 import { renderIndex } from "../corpus/indexFile.js";
 import { appendLog } from "../corpus/logFile.js";
-import { CORPUS_AGENTS_MD_INITIAL } from "../corpus/agentsFile.js";
+import {
+  CORPUS_AGENTS_MD_INITIAL,
+  CORPUS_AGENTS_MD_VERSION,
+  readAgentsMdVersion,
+  SHIPPED_AGENTS_MD,
+} from "../corpus/agentsFile.js";
 import { pathExists } from "../corpus/fs.js";
 import { gitAdd, gitCommit, gitInit } from "../corpus/git.js";
 import { LockBusyError, withWriteLock } from "../corpus/lockfile.js";
@@ -36,7 +41,11 @@ export interface InitResult {
   created: string[];
   /** 已存在而跳过的骨架项。 */
   existing: string[];
-  /** 是否产生 commit（仅有骨架文件落地时记 log 并提交）。 */
+  /** 本次自动升级到新版的受管约定文本（相对路径，目前仅 AGENTS.md）。 */
+  upgraded: string[];
+  /** 已存在但与已发行版本不一致（库主人改过或版本更老未留底），未自动升级、需手动合并的受管文本。 */
+  customized: string[];
+  /** 是否产生 commit（有骨架文件落地或约定文本升级时记 log 并提交）。 */
   committed: boolean;
   /** 新 commit 的完整 sha；未提交为 null。 */
   commit: string | null;
@@ -48,6 +57,11 @@ export interface InitResult {
  * 只要有骨架文件落地，就追加 Log（op=init）并入单个 commit（`init: corpus`）。
  * 已完整则无操作（不记 Log、不提交），幂等重跑零变更。
  */
+/** 受管文本比对：除尾部换行（编辑器常自动补末尾换行）外必须逐字节一致，才认定"库主人没改过"。 */
+function sameManagedText(a: string, b: string): boolean {
+  return a.replace(/\r?\n$/u, "") === b.replace(/\r?\n$/u, "");
+}
+
 export async function initCorpus(corpusDir: string): Promise<InitResult> {
   const root = path.resolve(corpusDir);
   const created: string[] = [];
@@ -83,20 +97,54 @@ export async function initCorpus(corpusDir: string): Promise<InitResult> {
     }
   }
 
-  if (createdFiles.length === 0) {
-    // 目录/git 的补齐不产生工作树变化；无文件落地即无操作，不记 Log、不提交
-    return { created, existing, committed: false, commit: null };
+  // 受管约定文本升级（#19 / ADR-0006）：版本落后且内容与某个已发行版本逐字节一致（人类未改过）
+  // 才自动升级；内容对不上任何已发行版本（改过、或更老且未留底）则不动，交库主人手动合并
+  const upgraded: string[] = [];
+  const customized: string[] = [];
+  if (!createdFiles.includes(AGENTS_FILE)) {
+    const agentsAbs = path.join(root, AGENTS_FILE);
+    if (await pathExists(agentsAbs)) {
+      const currentText = await readFile(agentsAbs, "utf8");
+      // 无标记的文本只有与 v1 一致（除尾部换行）才视为 v1，其余（更早未留底的版本、库主人改过）一律按自定义处理
+      const version =
+        readAgentsMdVersion(currentText) ??
+        (sameManagedText(currentText, SHIPPED_AGENTS_MD.get(1) ?? "") ? 1 : null);
+      if (version === null || version > CORPUS_AGENTS_MD_VERSION) {
+        customized.push(AGENTS_FILE);
+      } else if (version < CORPUS_AGENTS_MD_VERSION) {
+        if (sameManagedText(currentText, SHIPPED_AGENTS_MD.get(version) ?? "")) {
+          await writeFile(agentsAbs, CORPUS_AGENTS_MD_INITIAL, "utf8");
+          upgraded.push(AGENTS_FILE);
+        } else {
+          // 标记在、内容已改：不覆盖库主人的修改
+          customized.push(AGENTS_FILE);
+        }
+      }
+    }
   }
 
+  if (createdFiles.length === 0 && upgraded.length === 0) {
+    // 目录/git 的补齐不产生工作树变化；无文件落地即无操作，不记 Log、不提交
+    return { created, existing, upgraded, customized, committed: false, commit: null };
+  }
+
+  const noteParts: string[] = [];
+  if (createdFiles.length > 0) {
+    noteParts.push(`初始化骨架：${createdFiles.join("、")}`);
+  }
+  if (upgraded.length > 0) {
+    noteParts.push(`升级约定文本：${upgraded.join("、")} 至 v${CORPUS_AGENTS_MD_VERSION}`);
+  }
   await appendLog(root, {
     op: "init",
     object: "corpus",
-    note: `初始化骨架：${createdFiles.join("、")}`,
+    note: noteParts.join("；"),
   });
-  // 只提交 server 自己产生的变更（本次创建的骨架文件 + 必然追加的 log），绝不代人类提交其余改动（ADR-0004）
-  await gitAdd(root, [...createdFiles, LOG_FILE]);
+  // 只提交 server 自己产生的变更（本次创建的骨架文件 + 升级的受管文本 + 必然追加的 log），
+  // 绝不代人类提交其余改动（ADR-0004）
+  await gitAdd(root, [...createdFiles, ...upgraded, LOG_FILE]);
   const sha = await gitCommit(root, INIT_COMMIT_MESSAGE);
-  return { created, existing, committed: true, commit: sha };
+  return { created, existing, upgraded, customized, committed: true, commit: sha };
 }
 
 /** init 工具：幂等初始化 Corpus（冷启动零手工步骤）。 */
@@ -104,7 +152,9 @@ export const initTool: ToolDefinition = {
   name: "init",
   description:
     "幂等初始化 corpus 骨架（AGENTS.md/index.md/log.md/.gitignore/raw//wiki//.trash/，非 git 库则 git init）。" +
-    "缺什么补什么；已有骨架文件落地时追加 log 并生成单个 commit（`init: corpus`）；已完整则无操作。",
+    "缺什么补什么；已有骨架文件落地时追加 log 并生成单个 commit（`init: corpus`）；已完整则无操作。" +
+    "AGENTS.md 约定文本带版本标记：版本落后且内容未被库主人修改过时自动升级为新版（upgraded）；" +
+    "内容对不上任何已发行版本时不升级（customized），请手动合并新约定。",
   register(server, ctx) {
     server.registerTool(
       this.name,
