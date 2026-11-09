@@ -6,7 +6,7 @@ import { LOG_FILE, resolveInCorpus } from "./paths.js";
  * Log（日志，log.md）格式（spec #1，一字不差）：
  * 行首 `## [YYYY-MM-DD HH:mm] <op> | <对象>`，后跟可选说明行；仅 init 与 apply 追加，只增不改。
  */
-export const LOG_OPS = ["init", "ingest"] as const;
+export const LOG_OPS = ["init", "ingest", "refactor"] as const;
 export type LogOp = (typeof LOG_OPS)[number];
 
 /** 条目头格式：`## [YYYY-MM-DD HH:mm] <op> | <对象>`。 */
