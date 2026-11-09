@@ -265,4 +265,28 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
     const report = await callLint();
     expect(report.findings.filter((f) => f.rule === "broken-wikilink")).toEqual([]);
   });
+
+  it("重名规则（duplicate-name，#22）：别名互撞与大小写撞名被报告", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "甲主题.md": topicPage("甲主题", "正文。", ["共用别名"]),
+        "乙主题.md": topicPage("乙主题", "正文。", ["共用别名", "log4j2"]),
+        "Log4j2.md": topicPage("Log4j2", "内容。"),
+      },
+    });
+    await seedIndex(
+      fixture.root,
+      ["## Sources", "", "## Topics", "", "[[甲主题]]（别名：共用别名）", "[[乙主题]]（别名：共用别名、log4j2）", "[[Log4j2]]", ""].join("\n"),
+    );
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const report = await callLint();
+    const dups = report.findings.filter((f) => f.rule === "duplicate-name");
+    // 共用别名（甲/乙互撞）+ log4j2 与标题 Log4j2 大小写撞名
+    expect(dups).toHaveLength(2);
+    expect(dups.some((f) => f.detail.includes("甲主题") && f.detail.includes("乙主题"))).toBe(true);
+    expect(dups.some((f) => f.detail.includes("Log4j2") && f.detail.includes("乙主题"))).toBe(true);
+    expect(dups.every((f) => f.detail.includes("消歧义后缀"))).toBe(true);
+  });
 });

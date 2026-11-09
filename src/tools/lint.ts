@@ -9,6 +9,7 @@ export const RULE_BROKEN_WIKILINK = "broken-wikilink";
 export const RULE_ORPHAN_TOPIC = "orphan-topic";
 export const RULE_INDEX_MISMATCH = "index-mismatch";
 export const RULE_FRONTMATTER = "frontmatter";
+export const RULE_DUPLICATE_NAME = "duplicate-name";
 
 /** 一条体检结果：rule 定位规则、path 定位 corpus 内文件（POSIX 相对路径）、detail 说明问题。 */
 export interface LintFinding {
@@ -109,6 +110,31 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
     }
   }
 
+  // 规则 5：重名（title/别名互撞，大小写不敏感）——名字→页面必须一对一，否则 wikilink 解析不确定性；
+  // 兜人手改路径（人的改动不过 apply，apply 只拦本批引入的冲突，#22）
+  const namesToPages = new Map<string, Array<{ path: string; name: string }>>();
+  for (const page of validPages) {
+    for (const name of page.names) {
+      if (name.trim() === "") {
+        continue;
+      }
+      const key = name.toLowerCase();
+      const list = namesToPages.get(key) ?? [];
+      list.push({ path: page.pagePath, name });
+      namesToPages.set(key, list);
+    }
+  }
+  for (const [, list] of namesToPages) {
+    const distinctPaths = [...new Set(list.map((e) => e.path))];
+    if (distinctPaths.length >= 2) {
+      findings.push({
+        rule: RULE_DUPLICATE_NAME,
+        path: list[0]!.path,
+        detail: `名字「${list[0]!.name}」被多个页面使用：${distinctPaths.join("、")}；请用消歧义后缀改名（如「${list[0]!.name}（限定词）」）`,
+      });
+    }
+  }
+
   const byRule: Record<string, number> = {};
   for (const finding of findings) {
     byRule[finding.rule] = (byRule[finding.rule] ?? 0) + 1;
@@ -120,9 +146,9 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
 export const lintTool: ToolDefinition = {
   name: "lint",
   description:
-    "Corpus 体检（只读，不修改任何文件）。四规则：断链（wikilink 指向不存在的页或别名，含别名解析与锚点剥离）、" +
-    "孤儿页（主题页无入链；来源页不算）、索引不一致（页面↔index.md 双向对账）、frontmatter 完整性（按页面类型的必填字段）。" +
-    "返回结构化 findings（rule/path/detail），按报告逐项修复。",
+    "Corpus 体检（只读，不修改任何文件）。五规则：断链（wikilink 指向不存在的页或别名，含别名解析与锚点剥离；嵌入与代码内 [[ ]] 除外）、" +
+    "孤儿页（主题页无入链；来源页不算）、索引不一致（页面↔index.md 双向对账）、frontmatter 完整性（按页面类型的必填字段）、" +
+    "重名（title/别名互撞，大小写不敏感；建议消歧义后缀改名）。返回结构化 findings（rule/path/detail），按报告逐项修复。",
   register(server, ctx) {
     server.registerTool(
       this.name,

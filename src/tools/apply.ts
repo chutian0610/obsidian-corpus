@@ -68,7 +68,9 @@ interface Issue {
     | "duplicate_path"
     | "delete_missing"
     | "frontmatter"
-    | "broken_wikilink";
+    | "broken_wikilink"
+    | "duplicate_name"
+    | "title_filename_mismatch";
   message: string;
   path?: string;
   target?: string;
@@ -283,6 +285,61 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
     }
   }
 
+  // ③ title=文件名（#22）：server 按 title+别名解析 wikilink、Obsidian 按文件名解析，
+  // 两者必须同名互证；title 之外的其他叫法一律放 aliases
+  const plannedRels = new Set(planned.filter((c) => c.action !== "deleted").map((c) => c.rel));
+  for (const c of planned) {
+    if (c.action === "deleted" || !c.meta) {
+      continue;
+    }
+    const fileName = path.basename(c.rel, ".md");
+    if (c.title !== fileName) {
+      issues.push({
+        code: "title_filename_mismatch",
+        path: c.rel,
+        field: "title",
+        message: `title 必须等于文件名（去 .md）：title「${c.title}」≠ 文件名「${fileName}」（页面 ${c.rel}）；其他名字放 aliases`,
+      });
+    }
+  }
+
+  // ③ 名字唯一性（#22）：应用后"名字→页面"必须一对一，否则 wikilink 解析静默取第一个命中（不确定性）。
+  // 只拒"本批引入/维持"的冲突；纯存量互撞（本批未触碰）不阻塞，由 lint 的 duplicate-name 兜底
+  const namesToPages = new Map<string, Map<string, string>>(); // 小写名 → (pagePath → 原名)
+  for (const page of postPages.values()) {
+    for (const name of page.names) {
+      if (name.trim() === "") {
+        continue;
+      }
+      const key = name.toLowerCase();
+      let byPage = namesToPages.get(key);
+      if (!byPage) {
+        byPage = new Map();
+        namesToPages.set(key, byPage);
+      }
+      byPage.set(page.pagePath, name);
+    }
+  }
+  for (const [key, byPage] of namesToPages) {
+    if (byPage.size < 2) {
+      continue;
+    }
+    const paths = [...byPage.keys()];
+    const involved = paths.filter((p) => plannedRels.has(p));
+    if (involved.length === 0) {
+      continue;
+    }
+    const displayName = byPage.values().next().value ?? key;
+    issues.push({
+      code: "duplicate_name",
+      path: involved[0]!,
+      target: displayName,
+      message:
+        `名字「${displayName}」同时指向多个页面（${paths.join("、")}）；` +
+        `同名不同概念请用消歧义后缀，如「${displayName}（限定词）」`,
+    });
+  }
+
   if (issues.length > 0) {
     // 校验失败时尚未落盘任何内容，天然零残留
     return fail("validation_failed", "变更集校验失败，整批拒绝。", { issues });
@@ -404,8 +461,9 @@ export const applyTool: ToolDefinition = {
   name: "apply",
   description:
     "唯一写入口：整批提交 wiki/ 页面变更并原子落库。入参为变更集（path 限 wiki/ 内平铺 .md、" +
-    "整页新内容；content 为 null 表示删除，文件移入 .trash/）与日志条目（op 固定 ingest、title 兼作 commit 标题）。" +
-    "流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、wikilink 目标存在或本批新建、路径约束、不碰 raw/）" +
+    "整页内容；content 为 null 表示删除，文件移入 .trash/）与日志条目（op 固定 ingest、title 兼作 commit 标题）。" +
+    "流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、wikilink 目标存在或本批新建、" +
+    "title=文件名、名字唯一（重名建议消歧义后缀）、路径约束与文件名合法字符、不碰 raw/）" +
     "→ 变更 + index.md 联动 + log.md 追加进单个 commit（ingest: <标题>）。任一步失败整批拒绝，corpus 零变更。",
   register(server, ctx) {
     server.registerTool(
