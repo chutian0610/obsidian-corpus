@@ -212,7 +212,31 @@ describe("search 工具", () => {
     );
     expect(result.indexHits).toEqual([]);
     expect(result.fullTextHits).toEqual([]);
+    expect(result.filesWithHits).toEqual([]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("文件级聚合 filesWithHits：摘录被配额截断时聚合仍如实（#23）", async () => {
+    const { session, fixture: fx } = await setup();
+    // 单文件 60 处命中：摘录只给 50 条（单文件配额），聚合记 60
+    const manyHits = Array.from({ length: 60 }, (_, i) => `第${i + 1}处 周会记录。`).join("\n");
+    await fx.seedRaw("高频词.md", manyHits);
+    await fx.seedRaw("低频词.md", "周会记录 出现一次。");
+    await fx.commitSeed();
+
+    const result = parseJson(
+      await session.client.callTool({ name: "search", arguments: { query: "周会记录", scope: "raw" } }),
+    );
+    const fromHot = result.fullTextHits.filter((h: any) => h.path === "raw/高频词.md");
+    expect(fromHot).toHaveLength(50); // 摘录被单文件配额截断
+    expect(result.truncated).toBe(true);
+    // 聚合永不截断：高频词 60 + 低频词 1（周会记录.md 不在 raw scope 的本次断言范围内单独验证）
+    const agg = new Map(result.filesWithHits.map((f: any) => [f.path, f.hits]));
+    expect(agg.get("raw/高频词.md")).toBe(60);
+    expect(agg.get("raw/低频词.md")).toBe(1);
+    // 排序确定性：命中数降序
+    const counts = result.filesWithHits.map((f: any) => f.hits);
+    expect([...counts].sort((a: number, b: number) => b - a)).toEqual(counts);
   });
 
   it("空 query 被参数校验拒绝", async () => {
