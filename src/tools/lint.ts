@@ -41,16 +41,19 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
 
   // 规则 1：断链；顺带统计入链（规则 2 共用）。自链不算入链。
   //（正文复用 collectWikiPages 已剥好的 page.body，与 apply 的删除入链检查同形）
+  // 嵌入（![[...]]）目标可能是附件而非页面：不算断链；解析到页面的嵌入同样计入入链（#21）
   const inbound = new Map<string, number>();
   for (const page of pages) {
     for (const link of extractWikilinks(page.body)) {
       const targetPath = resolveWikilinkTarget(nameIndex, link.target);
       if (targetPath === null) {
-        findings.push({
-          rule: RULE_BROKEN_WIKILINK,
-          path: page.pagePath,
-          detail: `wikilink [[${link.target}${link.display === null ? "" : `|${link.display}`}]] 指向不存在的页（标题与别名均未命中）`,
-        });
+        if (!link.embed) {
+          findings.push({
+            rule: RULE_BROKEN_WIKILINK,
+            path: page.pagePath,
+            detail: `wikilink [[${link.target}${link.display === null ? "" : `|${link.display}`}]] 指向不存在的页（标题与别名均未命中）`,
+          });
+        }
       } else if (targetPath !== page.pagePath) {
         inbound.set(targetPath, (inbound.get(targetPath) ?? 0) + 1);
       }

@@ -188,3 +188,81 @@ describe("lint 工具（MCP 接缝）", () => {
     expect((await gitStatus(fixture.root)).clean).toBe(true);
   });
 });
+
+describe("lint 的解析边界（#21：mdast 提取）", () => {
+  it("代码围栏与行内代码里的 [[ ]] 不是链接；注释与数学定界符内同理", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "代码页.md": [
+          "---",
+          "type: topic",
+          "created: 2026-11-05",
+          "---",
+          "",
+          "正文引用 [[存在主题]]。",
+          "",
+          "```ts",
+          "const link = \"[[围栏里的链接]]\";",
+          "```",
+          "",
+          "行内代码 `[[inline 链接]]` 与注释 %%[[注释里的链接]]%% 与数学 $[[math]]$ 都不算。",
+          "",
+          "<!-- HTML 注释里的 [[链接]] 也不算 -->",
+          "",
+          "嵌入围栏：",
+          "",
+          "~~~~",
+          "[[波浪围栏里的链接]]",
+          "~~~~",
+          "",
+        ].join("\n"),
+        "存在主题.md": topicPage("存在主题", "被引用。"),
+      },
+    });
+    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[存在主题]]\n");
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const report = await callLint();
+    const broken = report.findings.filter((f) => f.rule === "broken-wikilink");
+    expect(broken).toEqual([]); // 围栏/行内代码/注释/数学里的 [[x]] 全部不产生断链
+  });
+
+  it("嵌入不计断链（附件目标）；嵌入既有页面计入该页入链", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "嵌入页.md": topicPage(
+          "嵌入页",
+          "嵌入图片 ![[截图.png]] 与不存在的附件 ![[别的.pdf]]，再嵌入整页 ![[被嵌主题]]。",
+        ),
+        "被嵌主题.md": topicPage("被嵌主题", "内容。"),
+      },
+    });
+    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[被嵌主题]]\n");
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const report = await callLint();
+    // 附件嵌入不是断链；被嵌主题经 ![[...]] 获得入链（不报孤儿）；
+    // 嵌入页自身无入链，如实报孤儿——嵌入只解除目标页的孤儿状态
+    expect(report.findings.filter((f) => f.rule === "broken-wikilink")).toEqual([]);
+    expect(report.findings.filter((f) => f.rule === "orphan-topic").map((f) => f.path)).toEqual([
+      "wiki/嵌入页.md",
+    ]);
+  });
+
+  it("目标解析大小写不敏感（对齐 Obsidian 文件名解析）", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "大小写页.md": topicPage("大小写页", "小写链接 [[log4j2]] 也能命中。"),
+        "Log4j2.md": topicPage("Log4j2", "内容。"),
+      },
+    });
+    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[Log4j2]]\n");
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const report = await callLint();
+    expect(report.findings.filter((f) => f.rule === "broken-wikilink")).toEqual([]);
+  });
+});

@@ -389,6 +389,81 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     expect(result.payload.issues?.some((i) => i.code === "duplicate_path")).toBe(true);
   });
 
+  it("代码围栏与行内代码里的 [[ ]] 不触发 broken_wikilink（#21）", async () => {
+    fixture = await createCorpusFixture({ raw: { [RAW_NAME]: "原文" } });
+    session = await connectTestClient(fixture.root);
+
+    const withCode = TOPIC_PAGE.replace(
+      "个人知识库的长期维护。",
+      "代码示例：\n\n```ts\nconst s = \"[[字面量链接]]\";\n```\n\n行内 `[[inline]]`。",
+    );
+    const result = await callApply({
+      changes: [
+        { path: "wiki/LLM 记账.md", content: SOURCE_PAGE },
+        { path: "wiki/个人知识管理.md", content: withCode },
+      ],
+      log: { title: "代码内链接" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.issues).toBeUndefined();
+  });
+
+  it("嵌入 ![[...]] 不要求目标是 wiki 页面（附件直通）", async () => {
+    fixture = await createCorpusFixture({ raw: { [RAW_NAME]: "原文" } });
+    session = await connectTestClient(fixture.root);
+
+    const withEmbed = TOPIC_PAGE.replace(
+      "个人知识库的长期维护。",
+      "配图 ![[截图.png]]，嵌入整页 ![[LLM 记账]]。",
+    );
+    const result = await callApply({
+      changes: [
+        { path: "wiki/LLM 记账.md", content: SOURCE_PAGE },
+        { path: "wiki/个人知识管理.md", content: withEmbed },
+      ],
+      log: { title: "嵌入批次" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.issues).toBeUndefined();
+  });
+
+  it("小写 wikilink 命中大写标题页（解析不区分大小写）", async () => {
+    fixture = await createCorpusFixture({ raw: { [RAW_NAME]: "原文" } });
+    session = await connectTestClient(fixture.root);
+
+    const lowerLink = TOPIC_PAGE.replace("[[LLM 记账#摘要]]", "[[llm 记账]]");
+    const result = await callApply({
+      changes: [
+        { path: "wiki/LLM 记账.md", content: SOURCE_PAGE },
+        { path: "wiki/个人知识管理.md", content: lowerLink },
+      ],
+      log: { title: "小写链接" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.issues).toBeUndefined();
+  });
+
+  it.each([
+    ["冒号", "wiki/时间线:2026.md"],
+    ["竖线", "wiki/A|B.md"],
+    ["尖括号", "wiki/<占位>.md"],
+  ])("wiki 文件名含 Windows 非法字符拒绝（%s）", async (_label, badPath) => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [{ path: badPath, content: TOPIC_PAGE }],
+      log: { title: "非法文件名" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.payload.issues?.some((i) => i.code === "invalid_path")).toBe(true);
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+
   it("删除不存在的页面拒绝", async () => {
     fixture = await createCorpusFixture();
     session = await connectTestClient(fixture.root);
