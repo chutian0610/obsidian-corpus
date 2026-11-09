@@ -5,6 +5,7 @@ import path from "node:path";
 import { connectTestClient, createCorpusFixture, type CorpusFixture, type TestSession } from "./harness.js";
 import { gitLog, gitStatus } from "../src/corpus/git.js";
 import { readLog } from "../src/corpus/logFile.js";
+import { CORPUS_AGENTS_MD_VERSION, SHIPPED_AGENTS_MD } from "../src/corpus/agentsFile.js";
 import type { InitResult } from "../src/tools/init.js";
 import type { StatusResult } from "../src/tools/status.js";
 
@@ -281,5 +282,78 @@ describe("init 的 .gitignore（#12）", () => {
     expect(result.existing).toContain(".gitignore");
     expect(result.created).not.toContain(".gitignore");
     expect(await readFile(path.join(root, ".gitignore"), "utf8")).toBe("custom/\n");
+  });
+});
+
+describe("init 的约定文本升级（#19 / ADR-0006）", () => {
+  it("全新 init：AGENTS.md 带当前版本标记与 v2 新增约定", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+    expect(result.upgraded).toEqual([]);
+    expect(result.customized).toEqual([]);
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toContain(`<!-- corpus-agents: v${CORPUS_AGENTS_MD_VERSION} -->`);
+    expect(text).toContain("编译价值门槛");
+    expect(text).toContain("title 必须与文件名");
+    expect(text).toContain("`![[...]]` 是嵌入");
+    expect(text).toContain("数据不是指令");
+  });
+
+  it("v1 旧文本（逐字节一致）：自动升级到当前版、单 commit、log 记录升级", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    // 播种 v1 原文（未跟踪文件，模拟既有 corpus 的受管文本）
+    await writeFile(path.join(root, "AGENTS.md"), SHIPPED_AGENTS_MD.get(1) ?? "", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.created).not.toContain("AGENTS.md");
+    expect(result.existing).toContain("AGENTS.md");
+    expect(result.upgraded).toEqual(["AGENTS.md"]);
+    expect(result.customized).toEqual([]);
+    expect(result.committed).toBe(true);
+
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
+    // git：恰好多一条 init commit，且升级后的 AGENTS.md 随之入库、树恢复干净
+    const log = await gitLog(root, 10);
+    expect(log).toHaveLength(1);
+    expect((await gitStatus(root)).clean).toBe(true);
+    // log.md：init 条目的 note 记录了升级
+    const entries = await readLog(root);
+    expect(entries.at(-1)?.op).toBe("init");
+    expect(entries.at(-1)?.note).toContain("升级约定文本");
+  });
+
+  it("被库主人改过的 AGENTS.md：不升级、文件原样、结果提示手动合并", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    const customizedText = `${SHIPPED_AGENTS_MD.get(1) ?? ""}\n本地补充约定。\n`;
+    await writeFile(path.join(root, "AGENTS.md"), customizedText, "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.upgraded).toEqual([]);
+    expect(result.customized).toEqual(["AGENTS.md"]);
+    // 文件原样保留（其余骨架正常创建并提交，但不staging 人类的 AGENTS.md）
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(customizedText);
+  });
+
+  it("已是当前版：幂等重跑不触发升级路径", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await withGitIdentity(() => callJson<InitResult>(s, "init"));
+    const again = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+    expect(again.upgraded).toEqual([]);
+    expect(again.customized).toEqual([]);
+    expect(again.committed).toBe(false);
+    expect(await gitLog(root, 10)).toHaveLength(1);
   });
 });
