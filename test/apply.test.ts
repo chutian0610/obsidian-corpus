@@ -170,25 +170,35 @@ describe("apply：成功路径", () => {
   it("覆盖更新既有页：index 旧行被替换", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "演进主题.md": ["---", "type: topic", "created: 2026-10-01", "title: 旧标题", "---", "旧正文。", ""].join("\n"),
+        "演进主题.md": ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
       },
     });
-    await seedRootFile("index.md", "## Sources\n\n## Topics\n\n[[旧标题]]\n");
+    await seedRootFile("index.md", "## Sources\n\n## Topics\n\n[[演进主题]]\n");
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
-    const updated = ["---", "type: topic", "created: 2026-10-01", "title: 新标题", "---", "新正文。", ""].join("\n");
+    // title=文件名（#22）：更新保持 title 与文件名一致，别名演进由 index 行注记体现
+    const updated = [
+      "---",
+      "type: topic",
+      "created: 2026-10-01",
+      "title: 演进主题",
+      "aliases: [演进别名]",
+      "---",
+      "新正文。",
+      "",
+    ].join("\n");
     const result = await callApply({
       changes: [{ path: "wiki/演进主题.md", content: updated }],
-      log: { title: "主题更名" },
+      log: { title: "主题演进" },
     });
 
     expect(result.isError).toBe(false);
     expect(result.payload.applied).toEqual([{ path: "wiki/演进主题.md", action: "updated" }]);
     const index = await readRootFile("index.md");
-    expect(index).not.toContain("[[旧标题]]");
-    expect(index).toContain("[[新标题]]");
-    expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("ingest: 主题更名");
+    expect(index).toContain("- [[演进主题]]（别名：演进别名）");
+    expect(index).not.toMatch(/^\[\[演进主题\]\]$/mu);
+    expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("ingest: 主题演进");
   });
 
   it("旧格式（无列表前缀）index 在任何 apply 后整体重渲染为列表格式", async () => {
@@ -493,6 +503,110 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     expect(result.payload.issues?.some((i) => i.code === "invalid_log")).toBe(true);
     expect(await gitLog(fixture.root)).toHaveLength(1);
   });
+
+  it("title 与文件名不一致拒绝（title_filename_mismatch）", async () => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    const mismatch = [
+      "---",
+      "type: topic",
+      "created: 2026-11-05",
+      "title: 与文件名不同的标题",
+      "---",
+      "正文。",
+      "",
+    ].join("\n");
+    const result = await callApply({
+      changes: [{ path: "wiki/页面文件.md", content: mismatch }],
+      log: { title: "标题文件名不符" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.payload.issues).toContainEqual(
+      expect.objectContaining({ code: "title_filename_mismatch", path: "wiki/页面文件.md", field: "title" }),
+    );
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+
+  it("新建页别名撞既有页标题拒绝，错误建议消歧义后缀（duplicate_name）", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "既有概念.md": ["---", "type: topic", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
+      },
+    });
+    session = await connectTestClient(fixture.root);
+
+    // title=文件名下两页同名 title 已不可能（文件名唯一）；重名只能经别名引入
+    const withAlias = [
+      "---",
+      "type: topic",
+      "created: 2026-11-05",
+      "aliases: [既有概念]",
+      "---",
+      "另一个概念，别名撞了别人。",
+      "",
+    ].join("\n");
+    const result = await callApply({
+      changes: [{ path: "wiki/新概念.md", content: withAlias }],
+      log: { title: "别名撞名" },
+    });
+
+    expect(result.isError).toBe(true);
+    const issue = result.payload.issues?.find((i) => i.code === "duplicate_name");
+    expect(issue).toMatchObject({ target: "既有概念" });
+    expect(issue?.message).toContain("消歧义后缀");
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+
+  it("本批两页别名互撞拒绝；纯存量互撞不阻塞本批", async () => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    const pageA = [
+      "---",
+      "type: topic",
+      "created: 2026-11-05",
+      "aliases: [共用别名]",
+      "---",
+      "A。",
+      "",
+    ].join("\n");
+    const pageB = [
+      "---",
+      "type: topic",
+      "created: 2026-11-05",
+      "aliases: [共用别名]",
+      "---",
+      "B。",
+      "",
+    ].join("\n");
+    const both = await callApply({
+      changes: [
+        { path: "wiki/页面A.md", content: pageA },
+        { path: "wiki/页面B.md", content: pageB },
+      ],
+      log: { title: "互撞" },
+    });
+    expect(both.isError).toBe(true);
+    expect(both.payload.issues?.some((i) => i.code === "duplicate_name" && i.target === "共用别名")).toBe(true);
+
+    // 存量互撞（人手改造成，不归 apply 管）+ 本批只动无关页面 → 不因存量冲突而拒
+    fixture = await createCorpusFixture({
+      wiki: {
+        "存量A.md": ["---", "type: topic", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧A。", ""].join("\n"),
+        "存量B.md": ["---", "type: topic", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧B。", ""].join("\n"),
+      },
+    });
+    session = await connectTestClient(fixture.root);
+    const unrelated = await callApply({
+      changes: [
+        { path: "wiki/无关页.md", content: ["---", "type: topic", "created: 2026-11-05", "---", "正文。", ""].join("\n") },
+      ],
+      log: { title: "无关批次" },
+    });
+    expect(unrelated.isError).toBe(false);
+  });
 });
 
 describe("apply：删除走 .trash/", () => {
@@ -564,7 +678,7 @@ describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
     const result = await callApply({
       changes: [
         {
-          path: "wiki/暂存来源页.md",
+          path: "wiki/暂存材料.md",
           content: [
             "---",
             "type: source",
@@ -594,7 +708,7 @@ describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
       "index.md",
       "log.md",
       "wiki/暂存主题.md",
-      "wiki/暂存来源页.md",
+      "wiki/暂存材料.md",
     ]);
   });
 

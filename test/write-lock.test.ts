@@ -59,7 +59,7 @@ function validApplyArgs(): unknown {
   return {
     changes: [
       {
-        path: "wiki/锁测试来源页.md",
+        path: "wiki/锁测试材料.md",
         content: [
           "---",
           "type: source",
