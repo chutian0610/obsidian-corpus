@@ -31,7 +31,7 @@ const RAW_MEETING = ["# 周会记录", "本周周会讨论了语料库维护分�
 
 const WIKI_TRANSFORMER = [
   "---",
-  "type: topic",
+  "type: concept",
   "title: Transformer",
   "aliases:",
   "  - 注意力机制",
@@ -45,7 +45,7 @@ const WIKI_TRANSFORMER = [
 
 const WIKI_RETRIEVAL = [
   "---",
-  "type: topic",
+  "type: concept",
   "title: 检索",
   "created: 2026-11-01",
   "---",
@@ -84,10 +84,12 @@ async function setup(): Promise<{ fixture: CorpusFixture; session: TestSession }
   // 播种 index.md（用共享层渲染，保持与 apply 联动产物同格式）
   await writeIndex(fixture.root, {
     sources: [{ title: "Transformer 论文精读", sourcePath: "raw/transformer论文.md" }],
-    topics: [
+    entities: [],
+    concepts: [
       { title: "Transformer", aliases: ["注意力机制", "自注意力"] },
       { title: "检索", aliases: [] },
     ],
+    topics: [],
   });
   await fixture.commitSeed();
   session = await connectTestClient(fixture.root);
@@ -126,7 +128,7 @@ describe("search 工具", () => {
       await session.client.callTool({ name: "search", arguments: { query: "注意力机制", scope: "all" } }),
     );
     const topicHit = byAlias.indexHits.find((h: any) => h.title === "Transformer");
-    expect(topicHit).toMatchObject({ section: "topics", matchedOn: "注意力机制" });
+    expect(topicHit).toMatchObject({ section: "concepts", matchedOn: "注意力机制" });
     expect(topicHit.aliases).toEqual(["注意力机制", "自注意力"]);
 
     const byTitle = parseJson(
@@ -264,6 +266,7 @@ describe("ingest_prepare 工具", () => {
 
     const related = result.relatedPages as Array<{
       pagePath: string;
+      type: string;
       relations: string[];
       matchedNames: string[];
     }>;
@@ -275,6 +278,7 @@ describe("ingest_prepare 工具", () => {
 
     // 主题页标题出现在源内容
     const topicPage = byPath.get("wiki/Transformer.md");
+    expect(topicPage?.type).toBe("concept"); // 页面类型如实透出（#32）
     expect(topicPage?.relations).toContain("title");
     expect(topicPage?.matchedNames).toContain("Transformer");
 
@@ -368,7 +372,7 @@ describe("ingest_prepare 的 git 边界前置（#17）", () => {
     // 模拟人类手改未提交（未跟踪 wiki 文件属阻塞性脏，ADR-0005）
     await writeFile(
       path.join(fx.root, "wiki", "手写草稿.md"),
-      "---\ntype: topic\ncreated: 2026-11-06\n---\n\n手写内容。\n",
+      "---\ntype: concept\ncreated: 2026-11-06\n---\n\n手写内容。\n",
       "utf8",
     );
 

@@ -79,7 +79,7 @@ const SOURCE_PAGE = [
 
 const TOPIC_PAGE = [
   "---",
-  "type: topic",
+  "type: concept",
   "created: 2026-11-05",
   "aliases: [PKM]",
   "---",
@@ -117,7 +117,7 @@ describe("apply：成功路径", () => {
     const index = await readRootFile("index.md");
     expect(index).toContain("## Sources");
     expect(index).toContain("- [[LLM 记账]] — raw/karpathy-llm.md");
-    expect(index).toContain("## Topics");
+    expect(index).toContain("## Concepts");
     expect(index).toContain("- [[个人知识管理]]（别名：PKM）");
 
     // log.md 追加（op=ingest、对象为标题）
@@ -137,7 +137,7 @@ describe("apply：成功路径", () => {
       wiki: {
         "既有主题.md": [
           "---",
-          "type: topic",
+          "type: concept",
           "created: 2026-10-01",
           "aliases: [旧称]",
           "---",
@@ -150,7 +150,7 @@ describe("apply：成功路径", () => {
 
     const newTopic = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-11-05",
       "aliases: [新别名]",
       "---",
@@ -170,7 +170,7 @@ describe("apply：成功路径", () => {
   it("覆盖更新既有页：index 旧行被替换", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "演进主题.md": ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
+        "演进主题.md": ["---", "type: concept", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
       },
     });
     await seedRootFile("index.md", "## Sources\n\n## Topics\n\n[[演进主题]]\n");
@@ -180,7 +180,7 @@ describe("apply：成功路径", () => {
     // title=文件名（#22）：更新保持 title 与文件名一致，别名演进由 index 行注记体现
     const updated = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-10-01",
       "title: 演进主题",
       "aliases: [演进别名]",
@@ -204,7 +204,7 @@ describe("apply：成功路径", () => {
   it("旧格式（无列表前缀）index 在任何 apply 后整体重渲染为列表格式", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "演进主题.md": ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
+        "演进主题.md": ["---", "type: concept", "created: 2026-10-01", "title: 演进主题", "---", "旧正文。", ""].join("\n"),
       },
     });
     // 既有 corpus 的无 `- ` 前缀行：解析必须兼容，且重渲染后统一迁移
@@ -212,14 +212,14 @@ describe("apply：成功路径", () => {
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
-    const updated = ["---", "type: topic", "created: 2026-10-01", "title: 演进主题", "---", "新正文。", ""].join("\n");
+    const updated = ["---", "type: concept", "created: 2026-10-01", "title: 演进主题", "---", "新正文。", ""].join("\n");
     const result = await callApply({
       changes: [{ path: "wiki/演进主题.md", content: updated }],
       log: { title: "正文更新" },
     });
 
     expect(result.isError).toBe(false);
-    expect(result.payload.index).toEqual({ sources: 0, topics: 1 });
+    expect(result.payload.index).toEqual({ sources: 0, entities: 0, concepts: 1 });
     const index = await readRootFile("index.md");
     expect(index).toContain("- [[演进主题]]");
     expect(index).not.toMatch(/^\[\[演进主题\]\]$/mu);
@@ -340,8 +340,8 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
   it("删除会在现存页留下断链时拒绝", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "被引主题.md": ["---", "type: topic", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
-        "引用页.md": ["---", "type: topic", "created: 2026-10-01", "---", "参见 [[被引主题]]。", ""].join("\n"),
+        "被引主题.md": ["---", "type: concept", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
+        "引用页.md": ["---", "type: concept", "created: 2026-10-01", "---", "参见 [[被引主题]]。", ""].join("\n"),
       },
     });
     session = await connectTestClient(fixture.root);
@@ -362,13 +362,13 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
   it("删除页并在同一变更集内更新引用页则成功", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "被引主题.md": ["---", "type: topic", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
-        "引用页.md": ["---", "type: topic", "created: 2026-10-01", "---", "参见 [[被引主题]]。", ""].join("\n"),
+        "被引主题.md": ["---", "type: concept", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
+        "引用页.md": ["---", "type: concept", "created: 2026-10-01", "---", "参见 [[被引主题]]。", ""].join("\n"),
       },
     });
     session = await connectTestClient(fixture.root);
 
-    const updated = ["---", "type: topic", "created: 2026-10-01", "---", "引用已随删除清理。", ""].join("\n");
+    const updated = ["---", "type: concept", "created: 2026-10-01", "---", "引用已随删除清理。", ""].join("\n");
     const result = await callApply({
       changes: [
         { path: "wiki/被引主题.md", content: null },
@@ -508,12 +508,12 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
   it("op=refactor：log 条目与 commit 消息前缀联动（#24）", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "待改写.md": ["---", "type: topic", "created: 2026-10-01", "title: 待改写", "---", "旧正文。", ""].join("\n"),
+        "待改写.md": ["---", "type: concept", "created: 2026-10-01", "title: 待改写", "---", "旧正文。", ""].join("\n"),
       },
     });
     session = await connectTestClient(fixture.root);
 
-    const updated = ["---", "type: topic", "created: 2026-10-01", "title: 待改写", "---", "改写后的正文。", ""].join("\n");
+    const updated = ["---", "type: concept", "created: 2026-10-01", "title: 待改写", "---", "改写后的正文。", ""].join("\n");
     const result = await callApply({
       changes: [{ path: "wiki/待改写.md", content: updated }],
       log: { op: "refactor", title: "改写待改写页", note: "纯重组，不涉及新材料" },
@@ -536,7 +536,7 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
 
     const mismatch = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-11-05",
       "title: 与文件名不同的标题",
       "---",
@@ -558,7 +558,7 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
   it("新建页别名撞既有页标题拒绝，错误建议消歧义后缀（duplicate_name）", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "既有概念.md": ["---", "type: topic", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
+        "既有概念.md": ["---", "type: concept", "created: 2026-10-01", "---", "正文。", ""].join("\n"),
       },
     });
     session = await connectTestClient(fixture.root);
@@ -566,7 +566,7 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     // title=文件名下两页同名 title 已不可能（文件名唯一）；重名只能经别名引入
     const withAlias = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-11-05",
       "aliases: [既有概念]",
       "---",
@@ -591,7 +591,7 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
 
     const pageA = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-11-05",
       "aliases: [共用别名]",
       "---",
@@ -600,7 +600,7 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     ].join("\n");
     const pageB = [
       "---",
-      "type: topic",
+      "type: concept",
       "created: 2026-11-05",
       "aliases: [共用别名]",
       "---",
@@ -620,14 +620,14 @@ describe("apply：拒绝路径（all-or-nothing）", () => {
     // 存量互撞（人手改造成，不归 apply 管）+ 本批只动无关页面 → 不因存量冲突而拒
     fixture = await createCorpusFixture({
       wiki: {
-        "存量A.md": ["---", "type: topic", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧A。", ""].join("\n"),
-        "存量B.md": ["---", "type: topic", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧B。", ""].join("\n"),
+        "存量A.md": ["---", "type: concept", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧A。", ""].join("\n"),
+        "存量B.md": ["---", "type: concept", "created: 2026-10-01", "aliases: [存量撞名]", "---", "旧B。", ""].join("\n"),
       },
     });
     session = await connectTestClient(fixture.root);
     const unrelated = await callApply({
       changes: [
-        { path: "wiki/无关页.md", content: ["---", "type: topic", "created: 2026-11-05", "---", "正文。", ""].join("\n") },
+        { path: "wiki/无关页.md", content: ["---", "type: concept", "created: 2026-11-05", "---", "正文。", ""].join("\n") },
       ],
       log: { title: "无关批次" },
     });
@@ -665,7 +665,7 @@ describe("apply：删除走 .trash/", () => {
     const index = await readRootFile("index.md");
     expect(index).not.toContain("[[LLM 记账]]");
     expect(index).toContain("## Sources");
-    expect(index).toContain("## Topics");
+    expect(index).toContain("## Concepts");
 
     // 日志只增：旧条目仍在，新条目带说明行
     const log = await readRootFile("log.md");
@@ -719,7 +719,7 @@ describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
         },
         {
           path: "wiki/暂存主题.md",
-          content: ["---", "type: topic", "created: 2026-11-05", "---", "", "见 [[暂存材料]]。", ""].join(
+          content: ["---", "type: concept", "created: 2026-11-05", "---", "", "见 [[暂存材料]]。", ""].join(
             "\n",
           ),
         },
@@ -743,7 +743,7 @@ describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
       wiki: {
         "待删主题.md": [
           "---",
-          "type: topic",
+          "type: concept",
           "created: 2026-11-05",
           "---",
           "",
@@ -767,5 +767,87 @@ describe("apply 显式暂存（#10）：commit 只含本操作产物", () => {
       "log.md",
       "wiki/待删主题.md",
     ]);
+  });
+});
+
+describe("页面三类与过渡迁移（#32 / ADR-0008）", () => {
+  it("新建 entity 页：index 落在 Entities 节", async () => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [
+        { path: "wiki/Log4j2.md", content: ["---", "type: entity", "created: 2026-11-26", "aliases: [Apache Log4j2]", "---", "日志框架。", ""].join("\n") },
+      ],
+      log: { title: "建实体页" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload.index).toEqual({ sources: 0, entities: 1, concepts: 0 });
+    const index = await readRootFile("index.md");
+    expect(index).toContain("## Entities");
+    expect(index).toContain("- [[Log4j2]]（别名：Apache Log4j2）");
+  });
+
+  it("apply 写 type: topic 被拒（legacy_type，提示归类）", async () => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [
+        { path: "wiki/新页.md", content: ["---", "type: topic", "created: 2026-11-26", "---", "正文。", ""].join("\n") },
+      ],
+      log: { title: "旧类型" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.payload.issues).toContainEqual(
+      expect.objectContaining({ code: "legacy_type", path: "wiki/新页.md", field: "type" }),
+    );
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+
+  it("存量迁移端到端：topic 页可读可解析 → refactor 批次改类 → index 三节、lint 归零", async () => {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "旧概念.md": ["---", "type: topic", "created: 2026-10-01", "---", "参见 [[旧组件]]。", ""].join("\n"),
+        "旧组件.md": ["---", "type: topic", "created: 2026-10-01", "---", "参见 [[旧概念]]。", ""].join("\n"),
+      },
+    });
+    await seedRootFile("index.md", "## Sources\n\n## Topics\n\n- [[旧概念]]\n- [[旧组件]]\n");
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const callToolJson = async (name: string, args: unknown): Promise<any> => {
+      const r = await session!.client.callTool({ name, arguments: args });
+      return JSON.parse((r.content as Array<{ text: string }>)[0]!.text);
+    };
+
+    // 过渡态：链接照常互链（无断链/孤儿）、对账通过、legacy-topic 提示 ×2、status 计 2
+    const before = await callToolJson("lint", {});
+    expect(before.findings.filter((f: any) => f.rule === "legacy-topic")).toHaveLength(2);
+    expect(before.findings.filter((f: any) => f.rule === "index-mismatch")).toEqual([]);
+    expect(before.findings.filter((f: any) => f.rule === "orphan-page")).toEqual([]);
+    expect((await callToolJson("status", {})).legacyTopicPages).toBe(2);
+
+    // 迁移批次：改 type 的普通 refactor 更新
+    const result = await callApply({
+      changes: [
+        { path: "wiki/旧概念.md", content: ["---", "type: concept", "created: 2026-10-01", "---", "参见 [[旧组件]]。", ""].join("\n") },
+        { path: "wiki/旧组件.md", content: ["---", "type: entity", "created: 2026-10-01", "---", "参见 [[旧概念]]。", ""].join("\n") },
+      ],
+      log: { op: "refactor", title: "存量 topic 页迁移", note: "旧概念→concept，旧组件→entity" },
+    });
+
+    expect(result.isError).toBe(false);
+    const index = await readRootFile("index.md");
+    expect(index).not.toContain("## Topics"); // 旧节随迁移消失
+    expect(index).toContain("- [[旧概念]]");
+    expect(index).toContain("- [[旧组件]]");
+    const after = await callToolJson("lint", {});
+    expect(after.findings).toEqual([]);
+    expect((await callToolJson("status", {})).legacyTopicPages).toBe(0);
+    expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("refactor: 存量 topic 页迁移");
+    expect((await gitStatus(fixture.root)).clean).toBe(true);
   });
 });

@@ -1,0 +1,3 @@
+# 页面词表拆分：topic → entity / concept
+
+用户拍板把 wiki 页面类型从两类（source / topic）拆为三类 **source / entity / concept**：entity 承载可专名化的具体事物（框架、组件、项目、人、论文），concept 承载抽象主题（现象、方法、模式）——Karpathy 原文即按 entities/concepts/sources 组织索引，且两者合起来正好覆盖原 topic 的语义，故 topic 不保留。归类是语义判断，server 无法校验对错：三类的存储、互链、lint、title=文件名与名字唯一门禁完全相同，类型的价值在于 index 分节（Sources/Entities/Concepts）与人的浏览归类，判断权在 LLM 与库主人（拿不准归 concept；改判走 refactor 批次）。备选是 topic 页加 `kind: entity` 元数据标注（零 server 改动），被否——用户要的是 index 里可见的一等分类。**过渡策略（读容忍 + 写拒绝）**：升级瞬间存量 `type: topic` 页仍可解析、名字照常参与 wikilink 解析（避免断链），apply 拒绝新写 topic（`legacy_type`），lint 报 `legacy-topic` 提示迁移，index 兼容读写旧 `## Topics` 节且条目随迁移批次摘除、空节自动消失；存量迁移 = 把页面 type 改为 entity/concept 的普通 refactor 批次，index 联动自动搬家。迁移完成后读容忍可择机移除。

@@ -74,7 +74,7 @@ function validApplyArgs(): unknown {
       },
       {
         path: "wiki/锁测试主题.md",
-        content: ["---", "type: topic", "created: 2026-11-05", "---", "", "见 [[锁测试材料]]。", ""].join(
+        content: ["---", "type: concept", "created: 2026-11-05", "---", "", "见 [[锁测试材料]]。", ""].join(
           "\n",
         ),
       },

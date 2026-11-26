@@ -34,7 +34,8 @@ const MAX_WINDOW_LINES = 5000;
 export interface RelatedPage {
   /** wiki/ 内相对路径。 */
   pagePath: string;
-  type: "source" | "topic";
+  /** 页面类型：source / entity / concept（过渡期存量页可能为 topic，ADR-0008）。 */
+  type: "source" | "entity" | "concept" | "topic";
   title: string;
   /** 触发关联的具体名字（标题 / 别名 / wikilink 目标）。 */
   matchedNames: string[];

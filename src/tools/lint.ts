@@ -6,10 +6,11 @@ import { INDEX_FILE } from "../corpus/paths.js";
 
 /** lint 规则标识（findings 的 rule 字段取值）。 */
 export const RULE_BROKEN_WIKILINK = "broken-wikilink";
-export const RULE_ORPHAN_TOPIC = "orphan-topic";
+export const RULE_ORPHAN_PAGE = "orphan-page";
 export const RULE_INDEX_MISMATCH = "index-mismatch";
 export const RULE_FRONTMATTER = "frontmatter";
 export const RULE_DUPLICATE_NAME = "duplicate-name";
+export const RULE_LEGACY_TOPIC = "legacy-topic";
 
 /** 一条体检结果：rule 定位规则、path 定位 corpus 内文件（POSIX 相对路径）、detail 说明问题。 */
 export interface LintFinding {
@@ -61,18 +62,34 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
     }
   }
 
-  // 规则 2：孤儿页（主题页无入链；来源页不算孤儿）
+  // 规则 2：孤儿页（实体页/概念页无入链；来源页不算孤儿）
   for (const page of validPages) {
-    if (page.meta.type === "topic" && (inbound.get(page.pagePath) ?? 0) === 0) {
-      findings.push({ rule: RULE_ORPHAN_TOPIC, path: page.pagePath, detail: "主题页无任何入链" });
+    if (page.meta.type !== "source" && (inbound.get(page.pagePath) ?? 0) === 0) {
+      findings.push({
+        rule: RULE_ORPHAN_PAGE,
+        path: page.pagePath,
+        detail: `${page.meta.type === "entity" ? "实体页" : page.meta.type === "concept" ? "概念页" : "存量 topic 页"}无任何入链`,
+      });
     }
   }
 
-  // 规则 3：索引不一致（页面↔index 双向，按标题对账；来源页对 Sources 节、主题页对 Topics 节）
+  // 规则 3：索引不一致（页面↔index 双向，按标题对账；来源页对 Sources 节，
+  // 实体页对 Entities、概念页对 Concepts、过渡期存量 topic 页对旧 Topics 节）
   const sourcePages = validPages.filter((page) => page.meta.type === "source");
-  const topicPages = validPages.filter((page) => page.meta.type === "topic");
+  const entityPages = validPages.filter((page) => page.meta.type === "entity");
+  const conceptPages = validPages.filter((page) => page.meta.type === "concept");
+  const legacyTopicPages = validPages.filter((page) => page.meta.type === "topic");
   const indexSourceTitles = new Set(index.sources.map((entry) => entry.title));
-  const indexTopicTitles = new Set(index.topics.map((entry) => entry.title));
+  const sections: Array<{
+    pages: typeof validPages;
+    entries: Array<{ title: string }>;
+    heading: string;
+    kind: string;
+  }> = [
+    { pages: entityPages, entries: index.entities, heading: "## Entities", kind: "实体页" },
+    { pages: conceptPages, entries: index.concepts, heading: "## Concepts", kind: "概念页" },
+    { pages: legacyTopicPages, entries: index.topics, heading: "## Topics（旧）", kind: "存量 topic 页" },
+  ];
   for (const page of sourcePages) {
     if (!indexSourceTitles.has(page.title)) {
       findings.push({
@@ -91,23 +108,35 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
       });
     }
   }
-  for (const page of topicPages) {
-    if (!indexTopicTitles.has(page.title)) {
-      findings.push({
-        rule: RULE_INDEX_MISMATCH,
-        path: page.pagePath,
-        detail: "主题页未登记进 index.md 的 ## Topics 节",
-      });
+  for (const section of sections) {
+    const titles = new Set(section.entries.map((entry) => entry.title));
+    for (const page of section.pages) {
+      if (!titles.has(page.title)) {
+        findings.push({
+          rule: RULE_INDEX_MISMATCH,
+          path: page.pagePath,
+          detail: `${section.kind}未登记进 index.md 的 ${section.heading} 节`,
+        });
+      }
+    }
+    for (const entry of section.entries) {
+      if (!section.pages.some((page) => page.title === entry.title)) {
+        findings.push({
+          rule: RULE_INDEX_MISMATCH,
+          path: INDEX_FILE,
+          detail: `${section.heading} 节的 [[${entry.title}]] 无对应${section.kind}`,
+        });
+      }
     }
   }
-  for (const entry of index.topics) {
-    if (!topicPages.some((page) => page.title === entry.title)) {
-      findings.push({
-        rule: RULE_INDEX_MISMATCH,
-        path: INDEX_FILE,
-        detail: `## Topics 节的 [[${entry.title}]] 无对应主题页`,
-      });
-    }
+
+  // 规则 6：存量 type: topic 页（ADR-0008 过渡）——提示迁移，不阻塞
+  for (const page of legacyTopicPages) {
+    findings.push({
+      rule: RULE_LEGACY_TOPIC,
+      path: page.pagePath,
+      detail: "存量 type: topic 已拆分为 entity/concept，请迁移（refactor 批次改 type 后重新登记 index）",
+    });
   }
 
   // 规则 5：重名（title/别名互撞，大小写不敏感）——名字→页面必须一对一，否则 wikilink 解析不确定性；
@@ -146,9 +175,10 @@ export async function lintCorpus(corpusRoot: string): Promise<LintReport> {
 export const lintTool: ToolDefinition = {
   name: "lint",
   description:
-    "Corpus 体检（只读，不修改任何文件）。五规则：断链（wikilink 指向不存在的页或别名，含别名解析与锚点剥离；嵌入与代码内 [[ ]] 除外）、" +
-    "孤儿页（主题页无入链；来源页不算）、索引不一致（页面↔index.md 双向对账）、frontmatter 完整性（按页面类型的必填字段）、" +
-    "重名（title/别名互撞，大小写不敏感；建议消歧义后缀改名）。返回结构化 findings（rule/path/detail），按报告逐项修复。",
+    "Corpus 体检（只读，不修改任何文件）。六规则：断链（wikilink 指向不存在的页或别名，含别名解析与锚点剥离；嵌入与代码内 [[ ]] 除外）、" +
+    "孤儿页（实体页/概念页无入链；来源页不算）、索引不一致（页面↔index.md 三节双向对账，过渡期兼容旧 Topics 节）、" +
+    "frontmatter 完整性（按页面类型的必填字段）、重名（title/别名互撞，大小写不敏感；建议消歧义后缀改名）、" +
+    "legacy-topic（存量 type: topic 提示迁移为 entity/concept）。返回结构化 findings（rule/path/detail），按报告逐项修复。",
   register(server, ctx) {
     server.registerTool(
       this.name,

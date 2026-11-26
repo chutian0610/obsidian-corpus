@@ -52,9 +52,14 @@ function sourcePage(source: string, title: string, body: string): string {
   return `---\ntype: source\nsource: ${source}\ntitle: ${title}\ncreated: 2026-01-01\n---\n\n${body}\n`;
 }
 
-function topicPage(title: string, body: string, aliases?: string[]): string {
+function conceptPage(title: string, body: string, aliases?: string[]): string {
   const aliasLine = aliases === undefined ? "" : `aliases: [${aliases.join(", ")}]\n`;
-  return `---\ntype: topic\ntitle: ${title}\n${aliasLine}created: 2026-01-01\n---\n\n${body}\n`;
+  return `---\ntype: concept\ntitle: ${title}\n${aliasLine}created: 2026-01-01\n---\n\n${body}\n`;
+}
+
+function entityPage(title: string, body: string, aliases?: string[]): string {
+  const aliasLine = aliases === undefined ? "" : `aliases: [${aliases.join(", ")}]\n`;
+  return `---\ntype: entity\ntitle: ${title}\n${aliasLine}created: 2026-01-01\n---\n\n${body}\n`;
 }
 
 describe("lint 工具（MCP 接缝）", () => {
@@ -69,11 +74,11 @@ describe("lint 工具（MCP 接缝）", () => {
           "参见 [[正常主题]] 与 [[正常主题#锚点]]。\n\n断链：[[不存在的主题]]。\n带显示名的断链：[[幽灵别名|显示别名]]。\n",
         ),
         // 正常主题页：有入链（含别名路径）、登记进 index，不应出现在任何 finding
-        "主题-正常主题.md": topicPage("正常主题", "正常主题的正文。", ["正常别名"]),
+        "主题-正常主题.md": conceptPage("正常主题", "正常主题的正文。", ["正常别名"]),
         // 孤儿夹具：主题页无任何入链；登记进 index（索引一致，只命中孤儿规则）
-        "主题-孤儿.md": topicPage("孤儿主题", "没有人链接到我。"),
+        "主题-孤儿.md": conceptPage("孤儿主题", "没有人链接到我。"),
         // frontmatter 夹具：主题页缺 created（只命中 frontmatter 规则）
-        "主题-缺字段.md": "---\ntype: topic\ntitle: 缺字段主题\n---\n\n正文。\n",
+        "主题-缺字段.md": "---\ntype: concept\ntitle: 缺字段主题\n---\n\n正文。\n",
         // 索引漂移夹具（有页无行）：来源页合法但未登记进 index；无入链（来源页不算孤儿）
         "来源-未登记.md": sourcePage("raw/未登记材料.md", "未登记材料", "参见 [[正常主题]]。\n"),
       },
@@ -85,7 +90,7 @@ describe("lint 工具（MCP 接缝）", () => {
         "",
         `[[断链测试材料]]${INDEX_SOURCE_SEPARATOR}raw/断链测试材料.md`,
         "",
-        "## Topics",
+        "## Concepts",
         "",
         "[[正常主题]]（别名：正常别名）",
         "[[孤儿主题]]",
@@ -100,7 +105,7 @@ describe("lint 工具（MCP 接缝）", () => {
     expect(report.summary.total).toBe(6);
     expect(report.summary.byRule).toEqual({
       "broken-wikilink": 2,
-      "orphan-topic": 1,
+      "orphan-page": 1,
       "index-mismatch": 2,
       frontmatter: 1,
     });
@@ -112,7 +117,7 @@ describe("lint 工具（MCP 接缝）", () => {
     expect(broken.some((f) => f.detail.includes("[[幽灵别名|显示别名]]"))).toBe(true);
 
     // 孤儿：只有无入链的主题页；来源页「未登记材料」无入链但不算孤儿
-    const orphans = report.findings.filter((f) => f.rule === "orphan-topic");
+    const orphans = report.findings.filter((f) => f.rule === "orphan-page");
     expect(orphans.map((f) => f.path)).toEqual(["wiki/主题-孤儿.md"]);
 
     // 索引不一致：有页无行（来源页未登记）+ 有行无页（index 里的幽灵主题行）
@@ -125,7 +130,7 @@ describe("lint 工具（MCP 接缝）", () => {
     expect(mismatch).toContainEqual({
       rule: "index-mismatch",
       path: "index.md",
-      detail: "## Topics 节的 [[幽灵主题]] 无对应主题页",
+      detail: "## Concepts 节的 [[幽灵主题]] 无对应概念页",
     });
 
     // frontmatter：缺字段页只报 created 一条
@@ -150,7 +155,7 @@ describe("lint 工具（MCP 接缝）", () => {
           "干净材料",
           "相关概念见 [[干净别名]]。\n",
         ),
-        "主题-干净主题.md": topicPage("干净主题", "干净主题的正文。", ["干净别名"]),
+        "主题-干净主题.md": conceptPage("干净主题", "干净主题的正文。", ["干净别名"]),
       },
     });
     await seedIndex(
@@ -160,7 +165,7 @@ describe("lint 工具（MCP 接缝）", () => {
         "",
         `[[干净材料]]${INDEX_SOURCE_SEPARATOR}raw/干净材料.md`,
         "",
-        "## Topics",
+        "## Concepts",
         "",
         "[[干净主题]]（别名：干净别名）",
         "",
@@ -177,9 +182,9 @@ describe("lint 工具（MCP 接缝）", () => {
 
   it("lint 只读：报告 findings 后工作树仍干净", async () => {
     fixture = await createCorpusFixture({
-      wiki: { "主题-孤儿.md": topicPage("孤儿主题", "无人链接。") },
+      wiki: { "主题-孤儿.md": conceptPage("孤儿主题", "无人链接。") },
     });
-    await seedIndex(fixture.root, "## Sources\n\n## Topics\n");
+    await seedIndex(fixture.root, "## Sources\n\n## Concepts\n");
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
@@ -195,7 +200,7 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
       wiki: {
         "代码页.md": [
           "---",
-          "type: topic",
+          "type: concept",
           "created: 2026-11-05",
           "---",
           "",
@@ -216,10 +221,10 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
           "~~~~",
           "",
         ].join("\n"),
-        "存在主题.md": topicPage("存在主题", "被引用。"),
+        "存在主题.md": conceptPage("存在主题", "被引用。"),
       },
     });
-    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[存在主题]]\n");
+    await seedIndex(fixture.root, "## Sources\n\n## Concepts\n\n[[存在主题]]\n");
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
@@ -231,14 +236,14 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
   it("嵌入不计断链（附件目标）；嵌入既有页面计入该页入链", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "嵌入页.md": topicPage(
+        "嵌入页.md": conceptPage(
           "嵌入页",
           "嵌入图片 ![[截图.png]] 与不存在的附件 ![[别的.pdf]]，再嵌入整页 ![[被嵌主题]]。",
         ),
-        "被嵌主题.md": topicPage("被嵌主题", "内容。"),
+        "被嵌主题.md": conceptPage("被嵌主题", "内容。"),
       },
     });
-    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[被嵌主题]]\n");
+    await seedIndex(fixture.root, "## Sources\n\n## Concepts\n\n[[被嵌主题]]\n");
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
@@ -246,7 +251,7 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
     // 附件嵌入不是断链；被嵌主题经 ![[...]] 获得入链（不报孤儿）；
     // 嵌入页自身无入链，如实报孤儿——嵌入只解除目标页的孤儿状态
     expect(report.findings.filter((f) => f.rule === "broken-wikilink")).toEqual([]);
-    expect(report.findings.filter((f) => f.rule === "orphan-topic").map((f) => f.path)).toEqual([
+    expect(report.findings.filter((f) => f.rule === "orphan-page").map((f) => f.path)).toEqual([
       "wiki/嵌入页.md",
     ]);
   });
@@ -254,11 +259,11 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
   it("目标解析大小写不敏感（对齐 Obsidian 文件名解析）", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "大小写页.md": topicPage("大小写页", "小写链接 [[log4j2]] 也能命中。"),
-        "Log4j2.md": topicPage("Log4j2", "内容。"),
+        "大小写页.md": conceptPage("大小写页", "小写链接 [[log4j2]] 也能命中。"),
+        "Log4j2.md": entityPage("Log4j2", "内容。"),
       },
     });
-    await seedIndex(fixture.root, "## Sources\n\n## Topics\n\n[[Log4j2]]\n");
+    await seedIndex(fixture.root, "## Sources\n\n## Entities\n\n[[Log4j2]]\n\n## Concepts\n\n[[大小写页]]\n");
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);
 
@@ -269,14 +274,14 @@ describe("lint 的解析边界（#21：mdast 提取）", () => {
   it("重名规则（duplicate-name，#22）：别名互撞与大小写撞名被报告", async () => {
     fixture = await createCorpusFixture({
       wiki: {
-        "甲主题.md": topicPage("甲主题", "正文。", ["共用别名"]),
-        "乙主题.md": topicPage("乙主题", "正文。", ["共用别名", "log4j2"]),
-        "Log4j2.md": topicPage("Log4j2", "内容。"),
+        "甲主题.md": conceptPage("甲主题", "正文。", ["共用别名"]),
+        "乙主题.md": conceptPage("乙主题", "正文。", ["共用别名", "log4j2"]),
+        "Log4j2.md": entityPage("Log4j2", "内容。"),
       },
     });
     await seedIndex(
       fixture.root,
-      ["## Sources", "", "## Topics", "", "[[甲主题]]（别名：共用别名）", "[[乙主题]]（别名：共用别名、log4j2）", "[[Log4j2]]", ""].join("\n"),
+      ["## Sources", "", "## Entities", "", "[[Log4j2]]", "", "## Concepts", "", "[[甲主题]]（别名：共用别名）", "[[乙主题]]（别名：共用别名、log4j2）", ""].join("\n"),
     );
     await fixture.commitSeed();
     session = await connectTestClient(fixture.root);

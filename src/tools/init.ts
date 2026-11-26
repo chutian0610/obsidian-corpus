@@ -24,7 +24,7 @@ const SKELETON_DIRS = [RAW_DIR, WIKI_DIR, TRASH_DIR];
 function skeletonFiles(): Array<{ relPath: string; content: string }> {
   return [
     { relPath: AGENTS_FILE, content: CORPUS_AGENTS_MD_INITIAL },
-    { relPath: INDEX_FILE, content: renderIndex({ sources: [], topics: [] }) },
+    { relPath: INDEX_FILE, content: renderIndex({ sources: [], entities: [], concepts: [], topics: [] }) },
     { relPath: LOG_FILE, content: "" },
     { relPath: GITIGNORE_FILE, content: GITIGNORE_INITIAL },
   ];

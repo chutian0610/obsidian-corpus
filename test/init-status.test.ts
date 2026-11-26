@@ -92,7 +92,7 @@ created: 2026-11-05
 `;
 
 const TOPIC_PAGE = `---
-type: topic
+type: concept
 created: 2026-11-05
 aliases:
   - 主题别名
@@ -121,7 +121,8 @@ describe("init", () => {
     }
     const indexText = await readFile(path.join(root, "index.md"), "utf8");
     expect(indexText).toContain("## Sources");
-    expect(indexText).toContain("## Topics");
+    expect(indexText).toContain("## Entities");
+    expect(indexText).toContain("## Concepts");
     // AGENTS.md 落正式约定文本：三层结构、页面 frontmatter、Ingest/Query/Lint 工作流、git 纪律
     const agentsText = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(agentsText).toContain("# Corpus 约定");
@@ -134,7 +135,7 @@ describe("init", () => {
     expect(agentsText).toContain("### Query（查询）");
     expect(agentsText).toContain("### Lint（体检）");
     expect(agentsText).toContain("type: source");
-    expect(agentsText).toContain("type: topic");
+    expect(agentsText).toContain("type: entity");
     expect(agentsText).toContain("## 安全边界与 git 纪律");
     expect(agentsText).toContain(".gitignore");
     expect(agentsText).not.toContain("占位");
@@ -209,7 +210,9 @@ describe("status", () => {
     expect(status.gitClean).toBe(true);
     expect(status.dirtyFiles).toEqual([]);
     expect(status.sourcePages).toBe(2);
-    expect(status.topicPages).toBe(1);
+    expect(status.conceptPages).toBe(1);
+    expect(status.entityPages).toBe(0);
+    expect(status.legacyTopicPages).toBe(0);
     expect(status.invalidPages).toBe(0);
     const last = status.recentLog[status.recentLog.length - 1];
     expect(last?.op).toBe("init");
@@ -244,7 +247,9 @@ describe("status", () => {
     expect(status.gitClean).toBe(false);
     expect(status.dirtyFiles).toEqual([]);
     expect(status.sourcePages).toBe(0);
-    expect(status.topicPages).toBe(0);
+    expect(status.entityPages).toBe(0);
+    expect(status.conceptPages).toBe(0);
+    expect(status.legacyTopicPages).toBe(0);
     expect(status.recentLog).toEqual([]);
   });
 });
@@ -327,6 +332,22 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     const entries = await readLog(root);
     expect(entries.at(-1)?.op).toBe("init");
     expect(entries.at(-1)?.note).toContain("升级约定文本");
+  });
+
+  it("v2 文本（逐字节一致）：链式自动升级到 v3", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await writeFile(path.join(root, "AGENTS.md"), SHIPPED_AGENTS_MD.get(2) ?? "", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.upgraded).toEqual(["AGENTS.md"]);
+    expect(result.customized).toEqual([]);
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
+    expect(text).toContain("## 页面三类");
+    expect(text).toContain("type: entity");
   });
 
   it("被库主人改过的 AGENTS.md：不升级、文件原样、结果提示手动合并", async () => {

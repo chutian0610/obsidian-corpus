@@ -1,16 +1,16 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveInCorpus, toCorpusRel, WIKI_DIR } from "./paths.js";
-import { parseWikiPage, splitFrontmatter, topicTitleFromMeta, type PageMeta } from "./frontmatter.js";
+import { parseWikiPage, splitFrontmatter, nonSourceTitleFromMeta, type PageMeta } from "./frontmatter.js";
 
 /** wiki 层的平铺页面清单：status 计数、apply 的 wikilink 目标校验、lint 对账共用。 */
 export interface WikiPage {
   /** wiki/ 内相对路径（POSIX 风格）。 */
   pagePath: string;
-  /** 文件名（去扩展名）；主题页缺省标题来源于它。 */
+  /** 文件名（去扩展名）；实体页/概念页的缺省标题来源于它。 */
   fileName: string;
   meta: PageMeta;
-  /** 最终标题：来源页必为 frontmatter title，主题页缺省取文件名。 */
+  /** 最终标题：来源页必为 frontmatter title，实体页/概念页缺省取文件名。 */
   title: string;
   /** wikilink 可解析的名字（标题 + 别名）。 */
   names: string[];
@@ -48,7 +48,7 @@ export async function collectWikiPages(corpusRoot: string): Promise<WikiPage[]> 
       const title =
         result.meta.type === "source"
           ? result.meta.title
-          : topicTitleFromMeta(result.meta, fileName);
+          : nonSourceTitleFromMeta(result.meta, fileName);
       pages.push({
         pagePath,
         fileName,
