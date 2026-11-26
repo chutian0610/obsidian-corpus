@@ -202,7 +202,7 @@ describe("raw 待灌材料（#15 / ADR-0005）", () => {
     await dropRaw(
       root,
       "wiki/手写草稿.md",
-      "---\ntype: topic\ncreated: 2026-11-06\n---\n\n手写内容。\n",
+      "---\ntype: concept\ncreated: 2026-11-06\n---\n\n手写内容。\n",
     );
 
     const status = await callTool<StatusPayload>("status", {});

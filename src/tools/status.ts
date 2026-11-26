@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "./registry.js";
 import { collectWikiPages } from "../corpus/pages.js";
-import { PAGE_TYPE_SOURCE } from "../corpus/frontmatter.js";
+import { PAGE_TYPE_SOURCE, PAGE_TYPE_ENTITY, PAGE_TYPE_CONCEPT, PAGE_TYPE_TOPIC } from "../corpus/frontmatter.js";
 import { readLog, type LogEntry } from "../corpus/logFile.js";
 import { gitStatus, GitError } from "../corpus/git.js";
 
@@ -18,8 +18,12 @@ export interface StatusResult {
   pendingRaw: string[];
   /** 来源页计数。 */
   sourcePages: number;
-  /** 主题页计数。 */
-  topicPages: number;
+  /** 实体页计数。 */
+  entityPages: number;
+  /** 概念页计数。 */
+  conceptPages: number;
+  /** 存量 type: topic 页计数（待迁移为 entity/concept，ADR-0008 过渡指标）。 */
+  legacyTopicPages: number;
   /** frontmatter 解析失败的页面数（页面计数外另行提示）。 */
   invalidPages: number;
   /** 最近日志条目（旧到新）。 */
@@ -50,7 +54,9 @@ export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
 
   const pages = await collectWikiPages(corpusDir);
   const sourcePages = pages.filter((p) => p.meta.type === PAGE_TYPE_SOURCE && p.issues.length === 0);
-  const topicPages = pages.filter((p) => p.meta.type !== PAGE_TYPE_SOURCE && p.issues.length === 0);
+  const entityPages = pages.filter((p) => p.meta.type === PAGE_TYPE_ENTITY && p.issues.length === 0);
+  const conceptPages = pages.filter((p) => p.meta.type === PAGE_TYPE_CONCEPT && p.issues.length === 0);
+  const legacyTopicPages = pages.filter((p) => p.meta.type === PAGE_TYPE_TOPIC && p.issues.length === 0);
   const invalidPages = pages.filter((p) => p.issues.length > 0);
 
   const recentLog = await readLog(corpusDir, STATUS_RECENT_LOG_COUNT);
@@ -61,7 +67,9 @@ export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
     dirtyFiles,
     pendingRaw,
     sourcePages: sourcePages.length,
-    topicPages: topicPages.length,
+    entityPages: entityPages.length,
+    conceptPages: conceptPages.length,
+    legacyTopicPages: legacyTopicPages.length,
     invalidPages: invalidPages.length,
     recentLog,
   };
@@ -72,7 +80,8 @@ export const statusTool: ToolDefinition = {
   name: "status",
   description:
     "只读返回 corpus 概览：git 是否干净与阻塞性脏文件清单、未跟踪的 raw/ 待灌材料清单（pendingRaw，可直接 ingest）、" +
-    "来源页/主题页计数、最近日志条目。agent 在写操作前调用以自检 git 干净边界；未 init 的目录返回 gitRepo=false。",
+    "来源页/实体页/概念页计数（legacyTopicPages 为待迁移的存量 topic 页数）、最近日志条目。" +
+    "agent 在写操作前调用以自检 git 干净边界；未 init 的目录返回 gitRepo=false。",
   register(server, ctx) {
     server.registerTool(
       this.name,

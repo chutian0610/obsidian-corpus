@@ -22,12 +22,16 @@ _Avoid_: 笔记（泛指时）、知识库（与 Corpus 混淆时）
 Wiki 中对应一份 Raw 材料的页面：摘要、要点与指向原文的引用。
 _Avoid_: 摘要页、材料页
 
-**主题页（Topic page）**:
-Wiki 中承载一个概念、实体或项目的页面，由 Ingest 惰性创建、持续累积。
-_Avoid_: 概念页、实体页（作统称时）
+**实体页（Entity page）**:
+Wiki 中承载可专名化的具体事物（框架、组件、项目、人、组织、论文）的页面，由 Ingest 惰性创建、持续累积。
+_Avoid_: 条目页
+
+**概念页（Concept page）**:
+Wiki 中承载抽象主题（现象、方法、模式）的页面，由 Ingest 惰性创建、持续累积。
+_Avoid_: 主题页（旧词，已拆分为实体页/概念页）
 
 **Index（索引）**:
-Corpus 的内容目录（`index.md`），登记全部来源与页面，随 Ingest 更新。
+Corpus 的内容目录（`index.md`），按 Sources / Entities / Concepts 三节登记全部页面，随 Ingest 更新。
 _Avoid_: 目录（文件夹义）、catalog
 
 **Log（日志）**:

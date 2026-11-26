@@ -10,7 +10,13 @@ import {
   resolveInCorpus,
   toCorpusRel,
 } from "../corpus/paths.js";
-import { PAGE_TYPE_SOURCE, parseWikiPage, topicTitleFromMeta, type PageMeta } from "../corpus/frontmatter.js";
+import {
+  PAGE_TYPE_SOURCE,
+  PAGE_TYPE_TOPIC,
+  parseWikiPage,
+  nonSourceTitleFromMeta,
+  type PageMeta,
+} from "../corpus/frontmatter.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
 import {
   appendIndexEntries,
@@ -74,7 +80,8 @@ interface Issue {
     | "frontmatter"
     | "broken_wikilink"
     | "duplicate_name"
-    | "title_filename_mismatch";
+    | "title_filename_mismatch"
+    | "legacy_type";
   message: string;
   path?: string;
   target?: string;
@@ -219,9 +226,20 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
       }
       continue;
     }
+    // 过渡门禁（#32 / ADR-0008）：type: topic 已拆分为 entity/concept，写路径一律拒，
+    // 迁移批次就是把存量页改成 entity/concept 的普通更新
+    if (parsed.meta.type === PAGE_TYPE_TOPIC) {
+      issues.push({
+        code: "legacy_type",
+        path: rel,
+        field: "type",
+        message: `type: topic 已拆分为 entity（具体事物）与 concept（抽象主题），请归类后重新提交（页面 ${rel}）`,
+      });
+      continue;
+    }
     const fileName = path.basename(rel, ".md");
     const pageTitle =
-      parsed.meta.type === "source" ? parsed.meta.title : topicTitleFromMeta(parsed.meta, fileName);
+      parsed.meta.type === "source" ? parsed.meta.title : nonSourceTitleFromMeta(parsed.meta, fileName);
     planned.push({
       rel,
       action: existing ? "updated" : "created",
@@ -448,7 +466,11 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
         action: c.action,
         ...(c.action === "deleted" && c.trashRel ? { trashPath: c.trashRel } : {}),
       })),
-      index: { sources: indexData.sources.length, topics: indexData.topics.length },
+      index: {
+        sources: indexData.sources.length,
+        entities: indexData.entities.length,
+        concepts: indexData.concepts.length,
+      },
       log: { op, object: title },
       commit: { sha, message: `${op}: ${title}` },
     });
@@ -472,9 +494,12 @@ export const applyTool: ToolDefinition = {
   description:
     "唯一写入口：整批提交 wiki/ 页面变更并原子落库。入参为变更集（path 限 wiki/ 内平铺 .md、" +
     "整页内容；content 为 null 表示删除，文件移入 .trash/）与日志条目（op 取 ingest 或 refactor（纯 wiki 重组）、" +
-    "title 兼作 commit 标题）。流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、" +
+    "title 兼作 commit 标题）。页面三类：source / entity（具体事物）/ concept（抽象主题）——" +
+    "type: topic 已拆分为 entity/concept，写入一律拒（存量页迁移＝改成新类型的普通更新批次）。" +
+    "流程：git 干净检查（脏即拒绝并列出文件）→ 校验（frontmatter 必填、" +
     "wikilink 目标存在或本批新建、title=文件名、名字唯一（重名建议消歧义后缀）、路径约束与文件名合法字符、不碰 raw/）" +
-    "→ 变更 + index.md 联动 + log.md 追加进单个 commit（<op>: <标题>）。任一步失败整批拒绝，corpus 零变更。",
+    "→ 变更 + index.md 联动（Sources/Entities/Concepts 三节）+ log.md 追加进单个 commit（<op>: <标题>）。" +
+    "任一步失败整批拒绝，corpus 零变更。",
   register(server, ctx) {
     server.registerTool(
       this.name,

@@ -1,14 +1,22 @@
 import { parse as parseYaml } from "yaml";
 
 /**
- * frontmatter 契约（spec #1，一字不差）：
+ * frontmatter 契约（spec #1；#32 起页面三类）：
  * - 来源页必填 `type: source` / `source`（raw 相对路径）/ `title` / `created`（ISO 日期）
- * - 主题页必填 `type: topic` / `created`，可选 `title`（缺省取文件名）、`aliases`（别名列表，参与 wikilink 解析）
+ * - 实体页/概念页必填 `type: entity | concept` / `created`，可选 `title`（缺省取文件名）、`aliases`（别名列表）
+ * - 过渡兼容（ADR-0008）：存量 `type: topic` 仍可解析（读容忍、链接照常解析），apply 拒绝新写；
+ *   存量页迁移完成后本兼容可移除
  */
 export const PAGE_TYPE_SOURCE = "source";
+export const PAGE_TYPE_ENTITY = "entity";
+export const PAGE_TYPE_CONCEPT = "concept";
+/** @deprecated 过渡兼容（ADR-0008）：仅读路径接受，写路径（apply）拒绝并提示归类。 */
 export const PAGE_TYPE_TOPIC = "topic";
 
 export const SOURCE_REQUIRED_FIELDS = ["type", "source", "title", "created"] as const;
+export const ENTITY_REQUIRED_FIELDS = ["type", "created"] as const;
+export const CONCEPT_REQUIRED_FIELDS = ["type", "created"] as const;
+/** @deprecated 过渡兼容，同 PAGE_TYPE_TOPIC。 */
 export const TOPIC_REQUIRED_FIELDS = ["type", "created"] as const;
 
 export const FM_TYPE = "type";
@@ -31,15 +39,16 @@ export interface SourcePageMeta {
   aliases: string[];
 }
 
-export interface TopicPageMeta {
-  type: typeof PAGE_TYPE_TOPIC;
+/** 非来源页（实体页/概念页，及过渡期存量 topic）的公共结构：两类仅 type 语义不同。 */
+export interface NonSourcePageMeta {
+  type: typeof PAGE_TYPE_ENTITY | typeof PAGE_TYPE_CONCEPT | typeof PAGE_TYPE_TOPIC;
   /** 缺省时取文件名（去扩展名），由解析调用方补齐。 */
   title: string | null;
   created: string;
   aliases: string[];
 }
 
-export type PageMeta = SourcePageMeta | TopicPageMeta;
+export type PageMeta = SourcePageMeta | NonSourcePageMeta;
 
 /** 校验问题：字段级、可直接进 lint/apply 报告。 */
 export interface FrontmatterIssue {
@@ -209,16 +218,25 @@ export function parseSourcePage(text: string): FrontmatterResult<SourcePageMeta>
   };
 }
 
-/** 解析主题页：必填 type/created；title 可选（缺省取文件名）；aliases 可选。 */
-export function parseTopicPage(text: string): FrontmatterResult<TopicPageMeta> {
+/** 解析非来源页（entity/concept，及过渡期存量 topic）：必填 type 与 created；title/aliases 可选。 */
+export function parseNonSourcePage(text: string): FrontmatterResult<NonSourcePageMeta> {
   const { raw, body } = splitFrontmatter(text);
-  const issues: FrontmatterIssue[] = [
-    ...checkType(raw, PAGE_TYPE_TOPIC),
-    ...checkCreated(raw),
-  ];
-  if (raw === null && issues.length === 0) {
-    issues.push({ field: "frontmatter", message: "缺少 frontmatter" });
+  const type = raw?.[FM_TYPE];
+  if (type !== PAGE_TYPE_ENTITY && type !== PAGE_TYPE_CONCEPT && type !== PAGE_TYPE_TOPIC) {
+    return {
+      ok: false,
+      issues: [
+        {
+          field: FM_TYPE,
+          message: `type 必须为 entity 或 concept（存量 topic 亦可解析，ADR-0008 过渡）${
+            type === undefined ? "（缺失）" : `（实际：${JSON.stringify(type)}）`
+          }`,
+        },
+        ...checkCreated(raw),
+      ],
+    };
   }
+  const issues = checkCreated(raw);
   if (issues.length > 0) {
     return { ok: false, issues };
   }
@@ -231,21 +249,26 @@ export function parseTopicPage(text: string): FrontmatterResult<TopicPageMeta> {
   }
   return {
     ok: true,
-    meta: { type: PAGE_TYPE_TOPIC, title, created: String(r[FM_CREATED]), aliases },
+    meta: { type, title, created: String(r[FM_CREATED]), aliases },
     body,
   };
 }
 
-/** 按页面类型分发解析（type 字段决定走向，二者都不是则按来源页报必填缺失）。 */
+/** 按页面类型分发解析（type 字段决定走向；无法识别时按来源页报必填缺失，保持报错路径单一）。 */
 export function parseWikiPage(text: string): FrontmatterResult<PageMeta> {
   const { raw } = splitFrontmatter(text);
-  if (raw?.[FM_TYPE] === PAGE_TYPE_TOPIC) {
-    return parseTopicPage(text);
+  const type = raw?.[FM_TYPE];
+  if (
+    type === PAGE_TYPE_ENTITY ||
+    type === PAGE_TYPE_CONCEPT ||
+    type === PAGE_TYPE_TOPIC
+  ) {
+    return parseNonSourcePage(text);
   }
   return parseSourcePage(text);
 }
 
-/** 主题页缺省标题：取文件名去扩展名。 */
-export function topicTitleFromMeta(meta: TopicPageMeta, fileName: string): string {
+/** 非来源页（实体/概念）缺省标题：取文件名去扩展名。 */
+export function nonSourceTitleFromMeta(meta: NonSourcePageMeta, fileName: string): string {
   return meta.title ?? fileName.replace(/\.md$/u, "");
 }

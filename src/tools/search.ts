@@ -2,13 +2,14 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ToolDefinition } from "./registry.js";
-import { readIndex, type SourceIndexEntry, type TopicIndexEntry } from "../corpus/indexFile.js";
+import { readIndex, type SourceIndexEntry, type NonSourceIndexEntry } from "../corpus/indexFile.js";
 import { RAW_DIR, WIKI_DIR, resolveInCorpus, toCorpusRel } from "../corpus/paths.js";
 import { readOptionalFile } from "../corpus/fs.js";
 
 /**
  * search（spec #1 / #4）：只读查询，Index-first、纯文本匹配（ADR-0003，无向量）。
- * - 索引命中：index.md 条目（标题 / 别名 / raw 路径）匹配 query。
+ * - 索引命中：index.md 条目（标题 / 别名 / raw 路径）匹配 query；三节 Sources/Entities/Concepts
+ *   （过渡期旧 Topics 节条目同样命中）。
  * - 全文命中：wiki/ 与 raw/ 逐行匹配，返回路径 + 行号 + 摘录。
  * - scope：all（默认）= 索引 + wiki/raw 全文；wiki = 索引 + wiki/ 全文；raw = 仅 raw/ 全文。
  */
@@ -24,9 +25,10 @@ const MAX_TOTAL_HITS = 200;
 const EXCERPT_RADIUS = 60;
 
 export interface IndexHit {
-  section: "sources" | "topics";
+  /** 命中的 index 节：sources / entities / concepts（过渡期旧 Topics 节报 topics）。 */
+  section: "sources" | "entities" | "concepts" | "topics";
   title: string;
-  /** Sources 条目的 raw 路径；Topics 条目无此字段。 */
+  /** Sources 条目的 raw 路径；其余节条目无此字段。 */
   sourcePath?: string;
   aliases?: string[];
   /** 命中的名字（标题、别名或 raw 路径）。 */
@@ -86,7 +88,7 @@ function matchSourceEntry(entry: SourceIndexEntry, query: string): string | null
   return null;
 }
 
-function matchTopicEntry(entry: TopicIndexEntry, query: string): string | null {
+function matchNonSourceEntry(entry: NonSourceIndexEntry, query: string): string | null {
   if (includesIgnoreCase(entry.title, query)) {
     return entry.title;
   }
@@ -177,8 +179,21 @@ export async function searchCorpus(corpusRoot: string, query: string, scope: Sea
         indexHits.push({ section: "sources", title: entry.title, sourcePath: entry.sourcePath, matchedOn });
       }
     }
+    for (const entry of index.entities) {
+      const matchedOn = matchNonSourceEntry(entry, query);
+      if (matchedOn !== null) {
+        indexHits.push({ section: "entities", title: entry.title, aliases: entry.aliases, matchedOn });
+      }
+    }
+    for (const entry of index.concepts) {
+      const matchedOn = matchNonSourceEntry(entry, query);
+      if (matchedOn !== null) {
+        indexHits.push({ section: "concepts", title: entry.title, aliases: entry.aliases, matchedOn });
+      }
+    }
+    // 过渡兼容（ADR-0008）：旧 Topics 节的存量条目同样参与索引命中
     for (const entry of index.topics) {
-      const matchedOn = matchTopicEntry(entry, query);
+      const matchedOn = matchNonSourceEntry(entry, query);
       if (matchedOn !== null) {
         indexHits.push({ section: "topics", title: entry.title, aliases: entry.aliases, matchedOn });
       }

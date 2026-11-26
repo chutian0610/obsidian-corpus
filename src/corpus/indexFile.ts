@@ -5,18 +5,24 @@ import type { PageMeta } from "./frontmatter.js";
 import type { WikiPage } from "./pages.js";
 
 /**
- * Index（索引，index.md）格式（spec #1，条目行加列表前缀便于 markdown 渲染）：
+ * Index（索引，index.md）格式（spec #1；#32 起三节）：
  * - `## Sources` 节：每行 `- [[来源页标题]] — raw/<路径>`
- * - `## Topics` 节：每行 `- [[主题页标题]]`，别名以全角括号附注
+ * - `## Entities` 节：每行 `- [[实体页标题]]`，别名以全角括号附注
+ * - `## Concepts` 节：每行 `- [[概念页标题]]`，别名以全角括号附注
+ * 过渡兼容（ADR-0008）：旧 corpus 的 `## Topics` 节仍可解析（进 topics 桶），
+ * 仅在非空时渲染；条目随迁移批次被 removeIndexEntries 摘除，空节自动消失。
  * 解析兼容无前缀的旧格式行——apply 整体重渲染时自动迁移为列表格式。
  */
 export const INDEX_SOURCES_HEADING = "## Sources";
+export const INDEX_ENTITIES_HEADING = "## Entities";
+export const INDEX_CONCEPTS_HEADING = "## Concepts";
+/** @deprecated 过渡兼容（ADR-0008）：存量 corpus 的待迁移节。 */
 export const INDEX_TOPICS_HEADING = "## Topics";
 /** 条目行的 markdown 列表前缀。 */
 export const INDEX_ENTRY_BULLET = "- ";
 /** Sources 行：`[[来源页标题]] — raw/<路径>`（em dash 两侧各一空格）。 */
 export const INDEX_SOURCE_SEPARATOR = " — ";
-/** Topics 行别名附注：`[[主题页标题]]（别名：a、b）`。 */
+/** 实体/概念行别名附注：`[[页标题]]（别名：a、b）`。 */
 export const INDEX_ALIASES_NOTE_PREFIX = "（别名：";
 export const INDEX_ALIASES_NOTE_SUFFIX = "）";
 export const INDEX_ALIASES_JOIN = "、";
@@ -28,22 +34,25 @@ export interface SourceIndexEntry {
   sourcePath: string;
 }
 
-export interface TopicIndexEntry {
-  /** 主题页标题（缺省取文件名的那份标题，与 wikilink 一致）。 */
+export interface NonSourceIndexEntry {
+  /** 实体页/概念页标题（缺省取文件名的那份标题，与 wikilink 一致）。 */
   title: string;
   aliases: string[];
 }
 
 export interface IndexData {
   sources: SourceIndexEntry[];
-  topics: TopicIndexEntry[];
+  entities: NonSourceIndexEntry[];
+  concepts: NonSourceIndexEntry[];
+  /** @deprecated 过渡兼容（ADR-0008）：旧 Topics 节的存量条目，迁移完成后清空。 */
+  topics: NonSourceIndexEntry[];
 }
 
 export function formatSourceEntry(entry: SourceIndexEntry): string {
   return `${INDEX_ENTRY_BULLET}[[${entry.title}]]${INDEX_SOURCE_SEPARATOR}${entry.sourcePath}`;
 }
 
-export function formatTopicEntry(entry: TopicIndexEntry): string {
+export function formatNonSourceEntry(entry: NonSourceIndexEntry): string {
   const base = `${INDEX_ENTRY_BULLET}[[${entry.title}]]`;
   if (entry.aliases.length === 0) {
     return base;
@@ -53,17 +62,27 @@ export function formatTopicEntry(entry: TopicIndexEntry): string {
 
 // 前缀可选：兼容既有 corpus 里无 `- ` 的旧格式行。
 const SOURCE_ENTRY_RE = /^(?:- )?\[\[([^\]]+)\]\] — (.+)$/u;
-const TOPIC_ENTRY_RE = /^(?:- )?\[\[([^\]]+)\]\](?:（别名：(.+?)）)?$/u;
+const NON_SOURCE_ENTRY_RE = /^(?:- )?\[\[([^\]]+)\]\](?:（别名：(.+?)）)?$/u;
 
-/** 渲染整个 index.md 内容（两节顺序固定：Sources 在前、Topics 在后）。 */
+/** 渲染整个 index.md 内容（节顺序固定：Sources / Entities / Concepts；Topics 仅在非空时渲染）。 */
 export function renderIndex(data: IndexData): string {
   const parts: string[] = [INDEX_SOURCES_HEADING, ""];
   for (const entry of data.sources) {
     parts.push(formatSourceEntry(entry));
   }
-  parts.push("", INDEX_TOPICS_HEADING, "");
-  for (const entry of data.topics) {
-    parts.push(formatTopicEntry(entry));
+  parts.push("", INDEX_ENTITIES_HEADING, "");
+  for (const entry of data.entities) {
+    parts.push(formatNonSourceEntry(entry));
+  }
+  parts.push("", INDEX_CONCEPTS_HEADING, "");
+  for (const entry of data.concepts) {
+    parts.push(formatNonSourceEntry(entry));
+  }
+  if (data.topics.length > 0) {
+    parts.push("", INDEX_TOPICS_HEADING, "");
+    for (const entry of data.topics) {
+      parts.push(formatNonSourceEntry(entry));
+    }
   }
   parts.push("");
   return parts.join("\n");
@@ -71,12 +90,20 @@ export function renderIndex(data: IndexData): string {
 
 /** 解析 index.md 内容；无法识别的行忽略（lint 票再做严格对账）。 */
 export function parseIndex(text: string): IndexData {
-  const data: IndexData = { sources: [], topics: [] };
-  let section: "sources" | "topics" | null = null;
+  const data: IndexData = { sources: [], entities: [], concepts: [], topics: [] };
+  let section: keyof IndexData | null = null;
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
     if (trimmed === INDEX_SOURCES_HEADING) {
       section = "sources";
+      continue;
+    }
+    if (trimmed === INDEX_ENTITIES_HEADING) {
+      section = "entities";
+      continue;
+    }
+    if (trimmed === INDEX_CONCEPTS_HEADING) {
+      section = "concepts";
       continue;
     }
     if (trimmed === INDEX_TOPICS_HEADING) {
@@ -91,10 +118,10 @@ export function parseIndex(text: string): IndexData {
       if (m) {
         data.sources.push({ title: m[1] ?? "", sourcePath: m[2] ?? "" });
       }
-    } else if (section === "topics") {
-      const m = trimmed.match(TOPIC_ENTRY_RE);
+    } else if (section === "entities" || section === "concepts" || section === "topics") {
+      const m = trimmed.match(NON_SOURCE_ENTRY_RE);
       if (m) {
-        data.topics.push({
+        data[section].push({
           title: m[1] ?? "",
           aliases: m[2] ? m[2].split(INDEX_ALIASES_JOIN) : [],
         });
@@ -108,7 +135,7 @@ export function parseIndex(text: string): IndexData {
 export async function readIndex(corpusRoot: string): Promise<IndexData> {
   const abs = resolveInCorpus(corpusRoot, INDEX_FILE);
   const text = await readOptionalFile(abs);
-  return text === null ? { sources: [], topics: [] } : parseIndex(text);
+  return text === null ? { sources: [], entities: [], concepts: [], topics: [] } : parseIndex(text);
 }
 
 /** 整体覆写 index.md（由 apply 在单个变更批次内联动调用）。 */
@@ -133,19 +160,29 @@ export function removeIndexEntries(data: IndexData, page: Pick<WikiPage, "title"
     if (i >= 0) {
       data.sources.splice(i, 1);
     }
-  } else {
-    const i = data.topics.findIndex((e) => e.title === page.title);
+    return;
+  }
+  // 非来源页按标题摘行：title 全库唯一（apply 门禁），三个非来源节统一摘——
+  // 兼容"页面已迁移成 entity/concept、旧行还留在 Topics 节"的过渡态
+  for (const list of [data.entities, data.concepts, data.topics]) {
+    const i = list.findIndex((e) => e.title === page.title);
     if (i >= 0) {
-      data.topics.splice(i, 1);
+      list.splice(i, 1);
     }
   }
 }
 
-/** index 联动（apply 用）：登记一个写入页（来源页进 Sources 节、主题页进 Topics 节）。 */
+/** index 联动（apply 用）：登记一个写入页（来源页进 Sources、实体页进 Entities、概念页进 Concepts）。 */
 export function appendIndexEntries(data: IndexData, page: IndexPageInput): void {
-  if (page.meta.type === "source") {
-    data.sources.push({ title: page.title, sourcePath: page.meta.source });
+  const meta = page.meta;
+  if (meta.type === "source") {
+    data.sources.push({ title: page.title, sourcePath: meta.source });
+  } else if (meta.type === "entity") {
+    data.entities.push({ title: page.title, aliases: meta.aliases });
+  } else if (meta.type === "concept") {
+    data.concepts.push({ title: page.title, aliases: meta.aliases });
   } else {
-    data.topics.push({ title: page.title, aliases: page.meta.aliases });
+    // 过渡防御：apply 已拒写 type: topic，正常批次到不了这里
+    data.topics.push({ title: page.title, aliases: meta.aliases });
   }
 }
