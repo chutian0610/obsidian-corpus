@@ -15,7 +15,7 @@ _Avoid_: vault（仅限 Obsidian 语境）、知识库、库
 _Avoid_: 素材、原文
 
 **Wiki**:
-Corpus 中由 LLM 维护的互链 markdown 层。
+Corpus 中由 LLM 维护的互链 markdown 层：内容是对 Raw 材料的归纳与提炼，不引入材料之外的知识。
 _Avoid_: 笔记（泛指时）、知识库（与 Corpus 混淆时）
 
 **来源页（Source page）**:
