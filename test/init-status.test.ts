@@ -366,7 +366,7 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     expect(text).not.toContain("主题页按章节概念建"); // v3 残留的旧类型表述已在 v4 订正
   });
 
-  it("v4 文本（逐字节一致）：链式自动升级到 v5，含「只写材料里有的」与反向核对", async () => {
+  it("v4 文本（逐字节一致）：链式自动升级到当前版，含「只写材料里有的」与反向核对", async () => {
     const root = await makeBareRoot();
     session = await connectTestClient(root);
     const s = session;
@@ -379,6 +379,21 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
     expect(text).toContain("只写材料里有的");
     expect(text).toContain("Wiki → 材料");
+  });
+
+  it("v5 文本（逐字节一致）：链式自动升级到 v6，含「实体页/概念页的出典」", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await writeFile(path.join(root, "AGENTS.md"), SHIPPED_AGENTS_MD.get(5) ?? "", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.upgraded).toEqual(["AGENTS.md"]);
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
+    expect(text).toContain("实体页/概念页的出典");
+    expect(text).toContain("不写原文小节号、图号");
   });
 
   it("被库主人改过的 AGENTS.md：不升级、文件原样、结果提示手动合并", async () => {
