@@ -19,9 +19,10 @@ import {
 } from "../corpus/frontmatter.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
 import {
-  appendIndexEntries,
   readIndex,
   removeIndexEntries,
+  renderIndex,
+  upsertIndexEntries,
   writeIndex,
 } from "../corpus/indexFile.js";
 import { appendLog } from "../corpus/logFile.js";
@@ -373,15 +374,17 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
   // 校验已拒非法 op，这里收窄为 LogOp 词表成员
   const op = opRaw === "refactor" ? "refactor" : "ingest";
 
-  // ④ index 联动：按变更前的页面元数据移除旧行，再追加新行（联动逻辑见 indexFile.ts）
+  // ④ index 联动：既有页原位替换（标题/别名没变则行不动），新建页追加、删除页摘行、换节才搬家
+  //（联动逻辑见 indexFile.ts 的 upsertIndexEntries）
   const indexData = await readIndex(corpusRoot);
   for (const c of planned) {
     const old = existingByPath.get(c.rel);
-    if (old) {
-      removeIndexEntries(indexData, old);
-    }
-    if (c.action !== "deleted" && c.meta) {
-      appendIndexEntries(indexData, { title: c.title, meta: c.meta });
+    if (c.action === "deleted") {
+      if (old) {
+        removeIndexEntries(indexData, old);
+      }
+    } else if (c.meta) {
+      upsertIndexEntries(indexData, { title: c.title, meta: c.meta }, old);
     }
   }
 
@@ -418,12 +421,15 @@ async function handleApply(corpusRoot: string, args: ApplyArgs) {
 
     const indexAbs = resolveInCorpus(corpusRoot, INDEX_FILE);
     const oldIndex = await readOptionalFile(indexAbs);
-    await writeIndex(corpusRoot, indexData);
-    undos.push(
-      oldIndex === null
-        ? () => rm(indexAbs, { force: true })
-        : () => writeFile(indexAbs, oldIndex, "utf8"),
-    );
+    // index 内容没变（如只改正文的更新）就不落盘：mtime 不动，commit 里也不出现（#38）
+    if (renderIndex(indexData) !== oldIndex) {
+      await writeIndex(corpusRoot, indexData);
+      undos.push(
+        oldIndex === null
+          ? () => rm(indexAbs, { force: true })
+          : () => writeFile(indexAbs, oldIndex, "utf8"),
+      );
+    }
 
     const logAbs = resolveInCorpus(corpusRoot, LOG_FILE);
     const oldLog = await readOptionalFile(logAbs);
