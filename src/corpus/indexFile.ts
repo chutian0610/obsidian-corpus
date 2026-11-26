@@ -151,38 +151,86 @@ export interface IndexPageInput {
   meta: PageMeta;
 }
 
-/** index 联动（apply 用）：移除一页对应的行（按变更前的标题/来源匹配；不在则无操作）。 */
-export function removeIndexEntries(data: IndexData, page: Pick<WikiPage, "title" | "meta">): void {
+/** 一页在 index 里的位置：所在节的条目数组与下标。 */
+interface IndexRowLocation {
+  list: SourceIndexEntry[] | NonSourceIndexEntry[];
+  index: number;
+}
+
+/**
+ * 按变更前的页面元数据定位一页的 index 行：来源页按「标题 + raw 路径」，其余按标题。
+ * 非来源页在三个非来源节里统一找——兼容"页面已迁移成 entity/concept、旧行还留在 Topics 节"的过渡态。
+ */
+function locateIndexRow(data: IndexData, page: Pick<WikiPage, "title" | "meta">): IndexRowLocation | null {
   const meta = page.meta;
   if (meta.type === "source") {
     const sourcePath = meta.source;
-    const i = data.sources.findIndex((e) => e.title === page.title && e.sourcePath === sourcePath);
-    if (i >= 0) {
-      data.sources.splice(i, 1);
-    }
-    return;
+    const index = data.sources.findIndex((e) => e.title === page.title && e.sourcePath === sourcePath);
+    return index >= 0 ? { list: data.sources, index } : null;
   }
-  // 非来源页按标题摘行：title 全库唯一（apply 门禁），三个非来源节统一摘——
-  // 兼容"页面已迁移成 entity/concept、旧行还留在 Topics 节"的过渡态
   for (const list of [data.entities, data.concepts, data.topics]) {
-    const i = list.findIndex((e) => e.title === page.title);
-    if (i >= 0) {
-      list.splice(i, 1);
+    const index = list.findIndex((e) => e.title === page.title);
+    if (index >= 0) {
+      return { list, index };
     }
+  }
+  return null;
+}
+
+/** index 联动（apply 用）：移除一页对应的行（按变更前的标题/来源匹配；不在则无操作）。 */
+export function removeIndexEntries(data: IndexData, page: Pick<WikiPage, "title" | "meta">): void {
+  const at = locateIndexRow(data, page);
+  if (at) {
+    at.list.splice(at.index, 1);
   }
 }
 
-/** index 联动（apply 用）：登记一个写入页（来源页进 Sources、实体页进 Entities、概念页进 Concepts）。 */
-export function appendIndexEntries(data: IndexData, page: IndexPageInput): void {
+/** 非来源页的目标节：实体页进 Entities、概念页进 Concepts。 */
+function nonSourceSection(data: IndexData, type: PageMeta["type"]): NonSourceIndexEntry[] | null {
+  if (type === "entity") {
+    return data.entities;
+  }
+  if (type === "concept") {
+    return data.concepts;
+  }
+  return data.topics; // 过渡防御：apply 已拒写 type: topic，正常批次到不了这里
+}
+
+/**
+ * index 联动（apply 用）：登记一个写入页。既有页**原位替换**——标题、别名没变时行内容与
+ * 顺序都不动（#38）；页面换了节（如归类改判）或新建页才追加到目标节末尾。
+ * `old` 为变更前的页面元数据，新建页不传。
+ */
+export function upsertIndexEntries(
+  data: IndexData,
+  page: IndexPageInput,
+  old?: Pick<WikiPage, "title" | "meta">,
+): void {
   const meta = page.meta;
+  const at = old ? locateIndexRow(data, old) : null;
   if (meta.type === "source") {
-    data.sources.push({ title: page.title, sourcePath: meta.source });
-  } else if (meta.type === "entity") {
-    data.entities.push({ title: page.title, aliases: meta.aliases });
-  } else if (meta.type === "concept") {
-    data.concepts.push({ title: page.title, aliases: meta.aliases });
+    const entry: SourceIndexEntry = { title: page.title, sourcePath: meta.source };
+    if (at && at.list === data.sources) {
+      data.sources[at.index] = entry; // 同节：原位替换
+    } else {
+      if (at) {
+        at.list.splice(at.index, 1); // 换节：从旧节摘除，再进目标节
+      }
+      data.sources.push(entry);
+    }
+    return;
+  }
+  const target = nonSourceSection(data, meta.type);
+  if (!target) {
+    return;
+  }
+  const entry: NonSourceIndexEntry = { title: page.title, aliases: meta.aliases };
+  if (at && at.list === target) {
+    target[at.index] = entry;
   } else {
-    // 过渡防御：apply 已拒写 type: topic，正常批次到不了这里
-    data.topics.push({ title: page.title, aliases: meta.aliases });
+    if (at) {
+      at.list.splice(at.index, 1);
+    }
+    target.push(entry);
   }
 }

@@ -10,6 +10,7 @@ import {
   type TestSession,
 } from "./harness.js";
 import { gitLog, gitStatus } from "../src/corpus/git.js";
+import { writeIndex } from "../src/corpus/indexFile.js";
 
 /**
  * apply 写事务（#5）接缝测试：经 MCP 边界直调工具，
@@ -849,5 +850,194 @@ describe("页面三类与过渡迁移（#32 / ADR-0008）", () => {
     expect((await callToolJson("status", {})).legacyTopicPages).toBe(0);
     expect((await gitLog(fixture.root)).slice(0, 1)[0]?.subject).toBe("refactor: 存量 topic 页迁移");
     expect((await gitStatus(fixture.root)).clean).toBe(true);
+  });
+});
+
+describe("index 联动：既有页原位替换（#38）", () => {
+  const execFileAsync = promisify(execFile);
+  const concept = (body: string, aliases: string[] = []): string =>
+    [
+      "---",
+      "type: concept",
+      "created: 2026-10-01",
+      ...(aliases.length > 0 ? [`aliases: [${aliases.join(", ")}]`] : []),
+      "---",
+      body,
+      "",
+    ].join("\n");
+  const entity = (body: string): string => concept(body).replace("type: concept", "type: entity");
+  const source = (rawRel: string, title: string): string =>
+    [
+      "---",
+      "type: source",
+      `source: ${rawRel}`,
+      `title: ${title}`,
+      "created: 2026-10-01",
+      "---",
+      `${title} 的摘要。`,
+      "",
+    ].join("\n");
+
+  /** index 某一节里的行标题，保持文件顺序。 */
+  function sectionRows(index: string, heading: string): string[] {
+    const rest = index.slice(index.indexOf(heading) + heading.length);
+    const end = rest.search(/^## /mu);
+    return (end < 0 ? rest : rest.slice(0, end))
+      .split("\n")
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.replace(/^- \[\[(.+?)\]\].*$/u, "$1"));
+  }
+
+  async function commitFiles(sha: string): Promise<string[]> {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["show", "--no-renames", "--name-only", "--pretty=format:", sha],
+      { cwd: fixture!.root },
+    );
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .sort();
+  }
+
+  /**
+   * 四页 + 刻意打乱的 index 顺序（概念：丙、甲、乙；实体：丁），返回初始 index 全文。
+   * 用例要更新「节首」或「节首 + 节尾」的页面：若实现是「摘除再追加」，顺序才会显出变化；
+   * 只更新节尾页面的话，追加回去又回到原位，bug 会被掩盖。
+   */
+  async function seeded(): Promise<string> {
+    fixture = await createCorpusFixture({
+      wiki: {
+        "丙.md": concept("丙的正文。"),
+        "甲.md": concept("甲的正文。"),
+        "乙.md": concept("乙的正文。"),
+        "丁.md": entity("丁的正文。"),
+      },
+    });
+    await writeIndex(fixture.root, {
+      sources: [],
+      entities: [{ title: "丁", aliases: [] }],
+      concepts: [
+        { title: "丙", aliases: [] },
+        { title: "甲", aliases: [] },
+        { title: "乙", aliases: [] },
+      ],
+      topics: [],
+    });
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+    return (await readRootFile("index.md")) as string;
+  }
+
+  // ── 回归测试：实现若退回「摘除再追加」则失败 ──
+
+  it("只改正文的更新：index 行原位不动，index.md 不进 commit", async () => {
+    const before = await seeded();
+    // 更新节首（丙）与节尾（乙）：摘除再追加会把顺序变成 甲、丙、乙
+    const result = await callApply({
+      changes: [
+        { path: "wiki/丙.md", content: concept("丙改写后的正文。") },
+        { path: "wiki/乙.md", content: concept("乙改写后的正文。") },
+      ],
+      log: { op: "refactor", title: "改写两页正文" },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(await readRootFile("index.md")).toBe(before); // 逐字节不变
+    // 提交边界：恰好是被改的两页 + log，没有 index.md
+    expect(await commitFiles(result.payload.commit!.sha)).toEqual(["log.md", "wiki/丙.md", "wiki/乙.md"]);
+  });
+
+  it("别名变更：行内容在原位置更新，顺序不动", async () => {
+    await seeded();
+    const result = await callApply({
+      changes: [{ path: "wiki/甲.md", content: concept("甲的正文。", ["甲别名"]) }],
+      log: { op: "refactor", title: "甲加别名" },
+    });
+
+    expect(result.isError).toBe(false);
+    const index = (await readRootFile("index.md")) as string;
+    expect(sectionRows(index, "## Concepts")).toEqual(["丙", "甲", "乙"]);
+    expect(index).toContain("- [[甲]]（别名：甲别名）");
+    expect(await commitFiles(result.payload.commit!.sha)).toEqual(["index.md", "log.md", "wiki/甲.md"]);
+  });
+
+  it("来源页改 source 指向：Sources 行原位更新", async () => {
+    fixture = await createCorpusFixture({
+      raw: { "材料乙.md": "乙", "材料甲.md": "甲" },
+      wiki: {
+        "材料乙.md": source("raw/材料乙.md", "材料乙"),
+        "材料甲.md": source("raw/材料甲.md", "材料甲"),
+      },
+    });
+    await writeIndex(fixture.root, {
+      sources: [
+        { title: "材料乙", sourcePath: "raw/材料乙.md" },
+        { title: "材料甲", sourcePath: "raw/材料甲.md" },
+      ],
+      entities: [],
+      concepts: [],
+      topics: [],
+    });
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    // 改的是 Sources 节的第一行：摘除再追加会把它挪到节尾
+    const result = await callApply({
+      changes: [{ path: "wiki/材料乙.md", content: source("raw/材料乙（修订）.md", "材料乙") }],
+      log: { op: "refactor", title: "材料乙换来源" },
+    });
+
+    expect(result.isError).toBe(false);
+    const index = (await readRootFile("index.md")) as string;
+    expect(sectionRows(index, "## Sources")).toEqual(["材料乙", "材料甲"]);
+    expect(index).toContain("- [[材料乙]] — raw/材料乙（修订）.md");
+  });
+
+  // ── 行为规格：页面换节时才搬家（旧实现同样满足，固化新实现的「换节」分支）──
+
+  it("归类改判：旧行从原节摘除，追加到新节末尾", async () => {
+    await seeded();
+    const result = await callApply({
+      changes: [
+        { path: "wiki/甲.md", content: entity("甲的正文。") },
+        { path: "wiki/丁.md", content: concept("丁的正文。") },
+      ],
+      log: { op: "refactor", title: "归类改判" },
+    });
+
+    expect(result.isError).toBe(false);
+    const index = (await readRootFile("index.md")) as string;
+    expect(sectionRows(index, "## Entities")).toEqual(["甲"]);
+    expect(sectionRows(index, "## Concepts")).toEqual(["丙", "乙", "丁"]);
+  });
+
+  it("来源页在同一路径改写成概念页：Sources 行摘除，Concepts 末尾新增", async () => {
+    fixture = await createCorpusFixture({
+      raw: { "材料甲.md": "甲" },
+      wiki: {
+        "材料甲.md": source("raw/材料甲.md", "材料甲"),
+        "既有概念.md": concept("既有概念的正文。"),
+      },
+    });
+    await writeIndex(fixture.root, {
+      sources: [{ title: "材料甲", sourcePath: "raw/材料甲.md" }],
+      entities: [],
+      concepts: [{ title: "既有概念", aliases: [] }],
+      topics: [],
+    });
+    await fixture.commitSeed();
+    session = await connectTestClient(fixture.root);
+
+    const result = await callApply({
+      changes: [{ path: "wiki/材料甲.md", content: concept("材料甲的正文。") }],
+      log: { op: "refactor", title: "材料甲改写成概念页" },
+    });
+
+    expect(result.isError).toBe(false);
+    const index = (await readRootFile("index.md")) as string;
+    expect(sectionRows(index, "## Sources")).toEqual([]);
+    expect(sectionRows(index, "## Concepts")).toEqual(["既有概念", "材料甲"]);
   });
 });
