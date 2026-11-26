@@ -1,6 +1,6 @@
 # obsidian-corpus
 
-参考 Karpathy llm-wiki 思路的个人知识库工具：AI agent 通过 MCP 长期维护一个 markdown 构成、git 版本化、Obsidian 可直接浏览的本地私有 corpus。分工遵循混合模型——agent 做内容判断（摘要、实体页/概念页组织、链接决策），server 做机械一致性（索引联动、日志追加、链接校验、原子写、git 提交）。
+参考 Karpathy llm-wiki 思路的个人知识库工具：AI agent 通过 MCP 长期维护一个 markdown 构成、git 版本化、Obsidian 可直接浏览的本地私有 corpus。分工遵循混合模型——agent 做内容判断（摘要、实体页/概念页组织、链接决策），server 做机械一致性（索引联动、日志追加、链接校验、原子写、git 提交）。Wiki 只收录可溯源到 Raw 材料的知识：agent 负责归纳、关联与提炼，不把自己的背景知识写进页面。
 
 规范见 GitHub issue #1（spec）、`CONTEXT.md`（领域词汇表）与 `docs/adr/`。
 
