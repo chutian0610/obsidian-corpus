@@ -1,13 +1,17 @@
+import { execFile } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { connectTestClient, createCorpusFixture, type CorpusFixture, type TestSession } from "./harness.js";
 import { gitLog, gitStatus } from "../src/corpus/git.js";
 import { readLog } from "../src/corpus/logFile.js";
 import { CORPUS_AGENTS_MD_VERSION, SHIPPED_AGENTS_MD } from "../src/corpus/agentsFile.js";
 import type { InitResult } from "../src/tools/init.js";
 import type { StatusResult } from "../src/tools/status.js";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * T2（#3）接缝测试：init（幂等骨架 + log + 单 commit）与 status（只读概览）。
@@ -237,6 +241,35 @@ describe("status", () => {
     const status = await callJson<StatusResult>(s, "status");
     expect(status.gitClean).toBe(false);
     expect(status.dirtyFiles).toContain("wiki/材料A.md");
+  });
+
+  it("文件名含空格、引号、反斜杠：按真实路径归类，不带 git 的引号转义", async () => {
+    fixture = await createCorpusFixture();
+    session = await connectTestClient(fixture.root);
+
+    await fixture.seedRaw(" 前导空格.md", "待灌材料");
+    await fixture.seedRaw("带 空格.md", "待灌材料");
+    await fixture.seedRaw('带"引号".md', "待灌材料");
+    await fixture.seedRaw("子目录/反斜杠\\.md", "待灌材料");
+    // 模拟人类手改后未 commit
+    await fixture.seedWikiPage("手改 草稿.md", TOPIC_PAGE);
+
+    const status = await callJson<StatusResult>(session, "status");
+    expect(status.gitClean).toBe(false);
+    expect(status.dirtyFiles).toEqual(["wiki/手改 草稿.md"]);
+    expect([...status.pendingRaw].sort()).toEqual(
+      ["raw/ 前导空格.md", "raw/带 空格.md", 'raw/带"引号".md', "raw/子目录/反斜杠\\.md"].sort(),
+    );
+  });
+
+  it("暂存的 rename：dirtyFiles 显示为 `old -> new`，含空格的路径同样不带引号", async () => {
+    fixture = await createCorpusFixture({ raw: { "材料A.md": "材料A 正文" } });
+    session = await connectTestClient(fixture.root);
+    await execFileAsync("git", ["mv", "raw/材料A.md", "raw/材料 A.md"], { cwd: fixture.root });
+
+    const status = await callJson<StatusResult>(session, "status");
+    expect(status.gitClean).toBe(false);
+    expect(status.dirtyFiles).toEqual(["raw/材料A.md -> raw/材料 A.md"]);
   });
 
   it("未 init 的目录 status：gitRepo=false、零计数", async () => {
