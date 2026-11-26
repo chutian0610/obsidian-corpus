@@ -19,7 +19,7 @@ Corpus 中由 LLM 维护的互链 markdown 层：内容是对 Raw 材料的归�
 _Avoid_: 笔记（泛指时）、知识库（与 Corpus 混淆时）
 
 **来源页（Source page）**:
-Wiki 中对应一份 Raw 材料的页面：承载该材料的要点、方案与可操作产物，并带指向原文的定位引用。
+Wiki 中对应一份 Raw 材料的页面：承载该材料的要点、方案与可操作产物，并指回原文。
 _Avoid_: 摘要页、材料页
 
 **实体页（Entity page）**:
