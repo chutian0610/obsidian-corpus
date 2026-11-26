@@ -7,11 +7,12 @@ import type { ToolDefinition } from "./registry.js";
 import { collectWikiPages, type WikiPage } from "../corpus/pages.js";
 import { isRawPath, RAW_DIR, resolveInCorpus, toCorpusRel, CorpusPathError } from "../corpus/paths.js";
 import { buildNameIndex, extractWikilinks, resolveWikilinkTarget } from "../corpus/wikilink.js";
+import { extractOutline, OUTLINE_MAX_ENTRIES, type OutlineEntry } from "../corpus/outline.js";
 import { gitStatus, GitError } from "../corpus/git.js";
 
 /**
  * ingest_prepare（spec #1 / #4）：只读。Ingest 流程的第一步：
- * 拿到指定 Raw 材料的内容（行窗口）、stat 与相关既有页面清单，供 agent 一次性起草完整变更集。
+ * 拿到指定 Raw 材料的内容（行窗口）、原文大纲、stat 与相关既有页面清单，供 agent 起草完整变更集。
  * 相关页判定（复用共享层名字索引与别名解析）：
  * - source：既有来源页的 source 指向同一份 raw 材料（重复灌入检测）。
  * - title / alias：页面标题或别名作为子串出现在源内容中。
@@ -20,6 +21,9 @@ import { gitStatus, GitError } from "../corpus/git.js";
  * raw 门禁（#20）：只接受 .md/.txt 文本材料（二进制会以乱码混进起草），内容含 NUL 视为二进制拒绝；
  * 大材料（书籍级）用 startLine/maxLines 分段读，防止全量返回撑爆 agent context；
  * 全文 sha256 与 raw/ 既有文件比对，内容相同而路径不同 → duplicateOf 警告（只警告不阻塞）。
+ *
+ * 原文大纲（#34）：返回与本次行窗口相交的标题条目（标题 + 行号区间），供 agent 起草后逐节核对覆盖度——
+ * 约定文本的「覆盖核对」步骤以它为清单。只返回与窗口相交的条目，大纲体量随窗口有界。
  *
  * git 边界前置（#17）：非 git 库或存在阻塞性脏文件时直接拒绝——apply 的门是本检查的
  * 严格超集，提前拒零误伤；apply 在写锁内的检查仍是权威（TOCTOU）。
@@ -58,6 +62,13 @@ export interface IngestPrepareResult {
     /** 还有后续内容时的下一窗口起始行；读尽为 null。 */
     nextStartLine: number | null;
   };
+  /**
+   * 原文大纲：与本次行窗口相交的标题条目（全文真实行号，不裁剪）。
+   * 整份材料一窗读完时即全文大纲；区间互不重叠、合起来覆盖全文。
+   */
+  outline: OutlineEntry[];
+  /** 与窗口相交的标题条目触达上限、被截断时为 true。 */
+  outlineTruncated: boolean;
   stat: {
     size: number;
     mtime: string;
@@ -208,6 +219,15 @@ export async function prepareIngest(
   const truncated = endLine !== null && endLine < totalLines;
   const nextStartLine = truncated ? endLine + 1 : null;
 
+  // 原文大纲（#34）：按全文提取，只留与本次窗口相交的条目——行号是全文真实行号，不裁剪，
+  // agent 因此知道窗口内容落在哪一节里；越过 EOF 的空窗口不与任何条目相交
+  const windowEnd = endLine ?? startLine - 1;
+  const intersecting = extractOutline(fullContent).filter(
+    (entry) => entry.startLine <= windowEnd && entry.endLine >= startLine,
+  );
+  const outline = intersecting.slice(0, OUTLINE_MAX_ENTRIES);
+  const outlineTruncated = intersecting.length > outline.length;
+
   const duplicateOf = await findRawDuplicates(corpusRoot, abs, fullContent);
 
   const pages = await collectWikiPages(corpusRoot);
@@ -243,6 +263,8 @@ export async function prepareIngest(
     path: rel,
     content,
     contentWindow: { startLine, endLine, totalLines, truncated, nextStartLine },
+    outline,
+    outlineTruncated,
     stat: {
       size: fileStat.size,
       mtime: fileStat.mtime.toISOString(),
@@ -258,7 +280,8 @@ export const ingestPrepareTool: ToolDefinition = {
   name: "ingest_prepare",
   description:
     "只读。Ingest 第一步：校验并读取指定 raw/ 材料（仅 .md/.txt，含 NUL 判二进制），返回源内容" +
-    "（行窗口：大材料用 startLine/maxLines 分段读，默认 2000 行、单次上限 5000）、文件 stat、内容查重" +
+    "（行窗口：大材料用 startLine/maxLines 分段读，默认 2000 行、单次上限 5000）、原文大纲" +
+    "（outline：与本次窗口相交的标题及其行号区间，起草后用它逐节核对覆盖度）、文件 stat、内容查重" +
     "（duplicateOf：raw/ 内内容相同而路径不同的文件）、相关既有页面清单（按 source 同源、标题/别名出现在" +
     "源内容、源内 wikilink 解析三类关联，基于全文计算）与 git 边界概要（含其余待灌材料）。" +
     "前置检查：非 git 库或存在未提交手改（脏树）时直接拒绝——避免整批起草后在 apply 阶段白费；" +

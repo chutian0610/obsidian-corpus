@@ -522,3 +522,87 @@ describe("ingest_prepare 的 raw 门禁与分段读（#20）", () => {
     expect(unique.duplicateOf).toEqual([]);
   });
 });
+
+describe("ingest_prepare 的原文大纲（#34）", () => {
+  // 行号：1 前言 / 2 空行 / 3 一级标题 / 4 正文A / 5 二级甲 / 6-8 围栏（内含 # 行）/ 9 二级乙 / 10 正文B
+  const OUTLINE_DOC = [
+    "前言一行。",
+    "",
+    "# 一级",
+    "正文A",
+    "## 二级甲",
+    "```bash",
+    "# 围栏里的井号行不是标题",
+    "```",
+    "## 二级 *乙* 与 `code`",
+    "正文B",
+  ].join("\n");
+
+  async function seedOutlineDoc(content: string): Promise<TestSession> {
+    const { fixture: fx, session: s } = await setup();
+    await fx.seedRaw("大纲材料.md", content);
+    await fx.commitSeed();
+    return s;
+  }
+
+  async function callPrepare(s: TestSession, args: Record<string, unknown>): Promise<any> {
+    return parseJson(
+      await s.client.callTool({ name: "ingest_prepare", arguments: { rawPath: "raw/大纲材料.md", ...args } }),
+    );
+  }
+
+  it("多级标题：层级与行号区间正确，围栏内的 # 不算标题，区间不重叠且覆盖全文", async () => {
+    const s = await seedOutlineDoc(OUTLINE_DOC);
+    const result = await callPrepare(s, {});
+    expect(result.outline).toEqual([
+      { level: 0, title: "（标题前内容）", startLine: 1, endLine: 2 },
+      { level: 1, title: "一级", startLine: 3, endLine: 4 },
+      { level: 2, title: "二级甲", startLine: 5, endLine: 8 },
+      { level: 2, title: "二级 乙 与 code", startLine: 9, endLine: 10 },
+    ]);
+    expect(result.outlineTruncated).toBe(false);
+    // 首尾相接：每条的下一行恰是下一条的起始行；合起来覆盖到文件末行
+    const entries = result.outline as Array<{ startLine: number; endLine: number }>;
+    for (let i = 1; i < entries.length; i++) {
+      expect(entries[i].startLine).toBe(entries[i - 1].endLine + 1);
+    }
+    expect(entries[0].startLine).toBe(1);
+    expect(entries.at(-1).endLine).toBe(result.contentWindow.totalLines);
+  });
+
+  it("分窗读取：只返回与窗口相交的条目，行号为全文真实行号", async () => {
+    const s = await seedOutlineDoc(OUTLINE_DOC);
+    const first = await callPrepare(s, { maxLines: 4 }); // 窗口 1..4
+    expect(first.outline.map((e: any) => e.title)).toEqual(["（标题前内容）", "一级"]);
+
+    const middle = await callPrepare(s, { startLine: 6, maxLines: 4 }); // 窗口 6..9
+    // 二级甲的标题在窗口之前、二级乙的区间延到窗口之后：都相交，行号不裁剪
+    expect(middle.outline).toEqual([
+      { level: 2, title: "二级甲", startLine: 5, endLine: 8 },
+      { level: 2, title: "二级 乙 与 code", startLine: 9, endLine: 10 },
+    ]);
+  });
+
+  it("越过 EOF 的空窗口：大纲为空数组", async () => {
+    const s = await seedOutlineDoc(OUTLINE_DOC);
+    const result = await callPrepare(s, { startLine: 100 });
+    expect(result.contentWindow.endLine).toBeNull();
+    expect(result.outline).toEqual([]);
+    expect(result.outlineTruncated).toBe(false);
+  });
+
+  it("带 frontmatter 的旧笔记：不产生伪标题，行号按真实位置计", async () => {
+    const s = await seedOutlineDoc(["---", "type: note", "tags: [a]", "---", "", "# 标题甲", "正文"].join("\n"));
+    const result = await callPrepare(s, {});
+    // frontmatter 既不是 setext 标题、也不算「标题前内容」
+    expect(result.outline).toEqual([{ level: 1, title: "标题甲", startLine: 6, endLine: 7 }]);
+  });
+
+  it("标题极多：触达上限即截断并标记 outlineTruncated", async () => {
+    const s = await seedOutlineDoc(Array.from({ length: 600 }, (_, i) => `# 标题${i + 1}`).join("\n"));
+    const result = await callPrepare(s, {});
+    expect(result.outline).toHaveLength(500);
+    expect(result.outlineTruncated).toBe(true);
+    expect(result.outline.at(-1)).toMatchObject({ startLine: 500, endLine: 500 });
+  });
+});

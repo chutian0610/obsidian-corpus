@@ -1,5 +1,4 @@
-import { unified } from "unified";
-import remarkParse from "remark-parse";
+import { markdownParser } from "./markdown.js";
 import type { WikiPage } from "./pages.js";
 
 /**
@@ -19,9 +18,6 @@ export interface Wikilink {
   /** `![[...]]` 嵌入（图片/附件/整页）。嵌入目标可能是附件，不参与目标存在性校验（#21）。 */
   embed: boolean;
 }
-
-/** 解析器复用（remark-parse 纯函数、无状态）。 */
-const parser = unified().use(remarkParse);
 
 /** mdast 节点的结构化最小类型（避免深引 unist 工具类型）。 */
 interface MdNode {
@@ -67,7 +63,7 @@ export function extractWikilinks(body: string): Wikilink[] {
       visit(child);
     }
   };
-  visit(parser.parse(body) as unknown as MdNode);
+  visit(markdownParser.parse(body) as unknown as MdNode);
   return links;
 }
 

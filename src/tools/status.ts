@@ -32,7 +32,7 @@ export interface StatusResult {
 
 /**
  * status 概览（spec #1，只读）：git 干净状态、脏文件清单、
- * 来源页/主题页计数、最近日志条目解析结果。
+ * 来源页/实体页/概念页计数、最近日志条目解析结果。
  * 对未 init 的目录优雅降级（各计数为 0、gitRepo=false），供 agent 自检后先 init。
  */
 export async function corpusStatus(corpusDir: string): Promise<StatusResult> {
