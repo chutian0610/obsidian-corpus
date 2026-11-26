@@ -381,7 +381,7 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     expect(text).toContain("Wiki → 材料");
   });
 
-  it("v5 文本（逐字节一致）：链式自动升级到 v6，含「实体页/概念页的出典」", async () => {
+  it("v5 文本（逐字节一致）：链式自动升级到当前版，含「只写材料里有的」与反向核对", async () => {
     const root = await makeBareRoot();
     session = await connectTestClient(root);
     const s = session;
@@ -392,8 +392,23 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     expect(result.upgraded).toEqual(["AGENTS.md"]);
     const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
-    expect(text).toContain("实体页/概念页的出典");
-    expect(text).toContain("不写原文小节号、图号");
+    expect(text).toContain("只写材料里有的");
+    expect(text).toContain("Wiki → 材料");
+  });
+
+  it("v6 文本（逐字节一致）：链式自动升级到 v7，全库不再要求出典定位", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await writeFile(path.join(root, "AGENTS.md"), SHIPPED_AGENTS_MD.get(6) ?? "", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.upgraded).toEqual(["AGENTS.md"]);
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
+    expect(text).toContain("出典与回查");
+    expect(text).not.toContain("出典定位"); // 来源页最小信息集里的「出典定位」一项已删除
   });
 
   it("被库主人改过的 AGENTS.md：不升级、文件原样、结果提示手动合并", async () => {
