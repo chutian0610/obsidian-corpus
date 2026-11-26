@@ -152,6 +152,40 @@ describe("raw 待灌材料（#15 / ADR-0005）", () => {
     expect(after.payload.pendingRaw).toEqual([]);
   });
 
+  it("文件名含空格的新材料：仍归 pendingRaw、不阻塞、随同一 commit 入库", async () => {
+    const root = await makeInitedCorpus();
+    await dropRaw(root, "raw/新材料 v2.md", "# 新材料 v2\n\n正文。");
+
+    // git 对含空格的路径会加引号输出（core.quotepath=false 只免除非 ASCII 字符），解析必须还原真实路径
+    const status = await callTool<StatusPayload>("status", {});
+    expect(status.payload.gitClean).toBe(true);
+    expect(status.payload.pendingRaw).toEqual(["raw/新材料 v2.md"]);
+    expect(status.payload.dirtyFiles).toEqual([]);
+
+    const prepare = await callTool<{ path: string; git: { pendingRaw: string[] } }>("ingest_prepare", {
+      rawPath: "raw/新材料 v2.md",
+    });
+    expect(prepare.isError).toBe(false);
+    expect(prepare.payload.path).toBe("raw/新材料 v2.md");
+    expect(prepare.payload.git.pendingRaw).toEqual(["raw/新材料 v2.md"]);
+
+    const apply = await withGitIdentity(() =>
+      callTool<ApplyPayload>("apply", sourcePageArgs("raw/新材料 v2.md", "新材料v2")),
+    );
+    expect(apply.isError).toBe(false);
+    expect(apply.payload.ok).toBe(true);
+    expect(await commitFiles(root, apply.payload.commit!.sha)).toEqual([
+      "index.md",
+      "log.md",
+      "raw/新材料 v2.md",
+      "wiki/新材料v2.md",
+    ]);
+
+    const after = await callTool<StatusPayload>("status", {});
+    expect(after.payload.gitClean).toBe(true);
+    expect(after.payload.pendingRaw).toEqual([]);
+  });
+
   it("未被引用的待灌材料：不阻塞、不被带入，留待下次", async () => {
     const root = await makeInitedCorpus();
     await dropRaw(root, "raw/被引用.md", "# 被引用\n");
