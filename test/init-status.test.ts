@@ -350,6 +350,22 @@ describe("init 的约定文本升级（#19 / ADR-0006）", () => {
     expect(text).toContain("type: entity");
   });
 
+  it("v3 文本（逐字节一致）：链式自动升级到 v4，含最小信息集与覆盖核对", async () => {
+    const root = await makeBareRoot();
+    session = await connectTestClient(root);
+    const s = session;
+
+    await writeFile(path.join(root, "AGENTS.md"), SHIPPED_AGENTS_MD.get(3) ?? "", "utf8");
+    const result = await withGitIdentity(() => callJson<InitResult>(s, "init"));
+
+    expect(result.upgraded).toEqual(["AGENTS.md"]);
+    const text = await readFile(path.join(root, "AGENTS.md"), "utf8");
+    expect(text).toBe(SHIPPED_AGENTS_MD.get(CORPUS_AGENTS_MD_VERSION));
+    expect(text).toContain("最小信息集");
+    expect(text).toContain("覆盖核对");
+    expect(text).not.toContain("主题页按章节概念建"); // v3 残留的旧类型表述已在 v4 订正
+  });
+
   it("被库主人改过的 AGENTS.md：不升级、文件原样、结果提示手动合并", async () => {
     const root = await makeBareRoot();
     session = await connectTestClient(root);
